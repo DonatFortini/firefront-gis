@@ -5,6 +5,7 @@ mod tests {
         convert_to_gpkg, create_project, download_satellite_jpeg, export_to_jpg,
         get_regional_extent,
     };
+    use firefront_gis_lib::utils::extract_files_by_name;
     use gdal::vector::LayerAccess;
     use gdal::Dataset;
     use std::fs;
@@ -122,17 +123,31 @@ mod tests {
         let regional_gpkg = "tests/test_regional.gpkg";
         let clipped_regional_gpkg = "tests/test_regional_clipped.gpkg";
 
-        let vegetation_shapefile =
-            "projects/porto-vecchio/Vegetation/FORMATION_VEGETALE/FORMATION_VEGETALE.shp";
+        let result =
+            extract_files_by_name("projects/cache/BDFORET_2A.7z", "FORMATION_VEGETALE", "tmp");
+        assert_result_ok(&result, "Extraction of vegetation shapefile failed");
+        assert_file_exists(
+            "tmp/FORMATION_VEGETALE/FORMATION_VEGETALE.shp",
+            "Vegetation shapefile was not created",
+        );
+
+        let vegetation_shapefile = "tmp/FORMATION_VEGETALE/FORMATION_VEGETALE.shp";
         let vegetation_gpkg = "tests/test_vegetation.gpkg";
         let clipped_veg_gpkg = "tests/test_vegetation_clipped.gpkg";
 
-        let rpg_shapefile =
-            "projects/porto-vecchio/RPG/PARCELLES_GRAPHIQUES/PARCELLES_GRAPHIQUES.shp";
+        let result =
+            extract_files_by_name("projects/cache/RPG_2A.7z", "PARCELLES_GRAPHIQUES", "tmp");
+
+        assert_result_ok(&result, "Extraction of RPG shapefile failed");
+        assert_file_exists(
+            "tmp/PARCELLES_GRAPHIQUES/PARCELLES_GRAPHIQUES.shp",
+            "RPG shapefile was not created",
+        );
+
+        let rpg_shapefile = "tmp/PARCELLES_GRAPHIQUES/PARCELLES_GRAPHIQUES.shp";
         let rpg_gpkg = "tests/test_rpg.gpkg";
         let clipped_rpg_gpkg = "tests/test_rpg_clipped.gpkg";
 
-        let topo_folder_path = "projects/porto-vecchio/Topographie";
         let topo_subfolder = vec![
             "AERODROME",
             "CONSTRUCTION_SURFACIQUE",
@@ -149,16 +164,13 @@ mod tests {
             "VOIE_NOMMEE",
         ];
 
-        for file in [
-            project_file_path,
-            vegetation_gpkg,
-            clipped_veg_gpkg,
-            rpg_gpkg,
-            clipped_rpg_gpkg,
-            regional_gpkg,
-            clipped_regional_gpkg,
-        ] {
-            remove_file_if_exists(file);
+        for subfolder in &topo_subfolder {
+            let result = extract_files_by_name("projects/cache/BDTOPO_2A.7z", subfolder, "tmp");
+            assert_result_ok(&result, "Extraction of topography shapefile failed");
+            assert_file_exists(
+                &format!("tmp/{}/{}.shp", subfolder, subfolder),
+                &format!("Topography shapefile {} was not created", subfolder),
+            );
         }
 
         let result = create_project(project_file_path, xmin, ymin, xmax, ymax);
@@ -174,7 +186,7 @@ mod tests {
         assert_result_ok(&result, "Conversion to GeoPackage failed");
 
         for subfolder in &topo_subfolder {
-            let shapefile_path = format!("{}/{}/{}.shp", topo_folder_path, subfolder, subfolder);
+            let shapefile_path = format!("tmp/{}/{}.shp", subfolder, subfolder);
             let gpkg_path = format!("tests/test_{}.gpkg", subfolder);
             let result = convert_to_gpkg(&shapefile_path, &gpkg_path);
             assert_result_ok(&result, "Conversion to GeoPackage failed");
@@ -287,22 +299,15 @@ mod tests {
         let veg_project_jpeg_path = "tests/test1_vegetation.jpg";
         let (xmin, ymin, xmax, ymax) = (1210000.0, 6070000.0, 1235000.0, 6095000.0);
 
-        // Download satellite JPEG
         let result = download_satellite_jpeg(output_jpg_path, xmin, ymin, xmax, ymax);
         assert_result_ok(&result, "Downloading satellite JPEG failed");
         assert_file_exists(output_jpg_path, "Satellite JPEG file was not created");
 
-        // Validate satellite JPEG properties
         validate_jpeg(output_jpg_path, 10.0, 10.0, "Satellite JPEG");
-
-        // Export vegetation project to JPEG
         let result = export_to_jpg(veg_project_file_path, veg_project_jpeg_path);
         assert_result_ok(&result, "Export to JPEG failed");
 
-        // Validate vegetation JPEG properties
         validate_jpeg(veg_project_jpeg_path, 10.0, 10.0, "Vegetation JPEG");
-
-        // Compare satellite and vegetation JPEGs
         compare_jpegs(output_jpg_path, veg_project_jpeg_path);
 
         // // Cleanup

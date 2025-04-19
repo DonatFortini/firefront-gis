@@ -6,6 +6,8 @@ pub enum AppView {
     Settings,
     Documentation,
     NewProject,
+    Loading(String), // Project name and data
+    Project(ProjectData),
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -13,4 +15,17 @@ pub struct Project {
     pub name: String,
     pub preview_path: String,
     pub file_path: String,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ProjectData {
+    pub name: String,
+    pub file_path: String,
+    pub view_mode: ViewMode,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub enum ViewMode {
+    Vegetation,
+    Satellite,
 }

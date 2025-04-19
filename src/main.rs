@@ -1,7 +1,9 @@
 pub mod app;
 pub mod documentation;
 pub mod home;
+pub mod loading;
 pub mod new_project;
+pub mod project;
 pub mod settings;
 pub mod sidebar;
 pub mod types;

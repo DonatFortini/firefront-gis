@@ -1,10 +1,10 @@
-use gdal::Dataset;
-use gdal::DriverManager;
 use gdal::spatial_ref::SpatialRef;
 use gdal::vector::LayerAccess;
+use gdal::Dataset;
+use gdal::DriverManager;
 use gdal_sys::OGRwkbGeometryType;
-use serde_json::Value;
 use serde_json::json;
+use serde_json::Value;
 use std::env::current_dir;
 use std::fs;
 use std::process::Command;
@@ -841,7 +841,11 @@ pub fn add_topo_layer(
                 .zip(mask.iter())
                 .map(
                     |(&base_value, &mask_value)| {
-                        if mask_value { 0 } else { base_value }
+                        if mask_value {
+                            0
+                        } else {
+                            base_value
+                        }
                     },
                 )
                 .collect::<Vec<u8>>()
@@ -1178,7 +1182,7 @@ pub fn download_satellite_jpeg(
             println!("Le JPEG final n'a pas les bonnes dimensions. Création d'un nouveau JPEG...");
 
             let temp_jpg = "tmp/output_correct_size.jpg";
-            let status = Command::new("convert")
+            let status = Command::new("magick")
                 .args([
                     temp_satellite,
                     "-resize",

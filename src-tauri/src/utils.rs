@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 lazy_static! {
@@ -115,9 +115,7 @@ lazy_static! {
     pub static ref RPG_DEP: HashMap<&'static str, Vec<&'static str>> = HashMap::from([
         (
             "84",
-            vec![
-                "1", "3", "7", "15", "26", "38", "42", "43", "63", "69", "73", "74"
-            ]
+            vec!["1", "3", "7", "15", "26", "38", "42", "43", "63", "69", "73", "74"]
         ),
         ("27", vec!["21", "25", "39", "58", "70", "71", "89", "90"]),
         ("53", vec!["22", "29", "35", "56"]),
@@ -132,15 +130,11 @@ lazy_static! {
         ("28", vec!["14", "27", "50", "61", "76"]),
         (
             "75",
-            vec![
-                "16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87"
-            ]
+            vec!["16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87"]
         ),
         (
             "76",
-            vec![
-                "9", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"
-            ]
+            vec!["9", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"]
         ),
         ("52", vec!["44", "49", "53", "72", "85"]),
         ("93", vec!["4", "5", "6", "13", "83", "84"]),
@@ -170,7 +164,11 @@ pub fn get_departement_name(code: &str) -> Option<String> {
 pub fn get_departement_code(name: &str) -> Option<String> {
     DEPARTEMENTS.iter().find_map(
         |(code, n)| {
-            if n == name { Some(code.clone()) } else { None }
+            if n == name {
+                Some(code.clone())
+            } else {
+                None
+            }
         },
     )
 }
@@ -220,133 +218,69 @@ pub fn compress_folder(
     Ok(())
 }
 
-pub fn extract_archive(
+pub fn extract_files_by_name(
     archive_path: &str,
-    destination_directory_path: Option<&str>,
-) -> Result<(), Box<dyn Error>> {
-    let mut command = Command::new("7z");
-    command.arg("x");
-
-    if let Some(destination_directory_path) = destination_directory_path {
-        command.arg(format!("-o{}", destination_directory_path));
-    } else {
-        let parent_dir = Path::new(archive_path).parent().unwrap();
-        command.arg(format!("-o{}", parent_dir.to_str().unwrap()));
-    }
-
-    command.arg(archive_path);
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(format!("Failed to execute command: {:?}", output).into());
-    }
-
-    Ok(())
-}
-
-pub fn find_filepath_in_archive(
-    archive_path: &str,
-    file_name: &str,
-) -> Result<Option<String>, Box<dyn Error>> {
-    let output = Command::new("7z").args(["l", archive_path]).output()?;
-
-    if output.status.success() {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        for line in output_str.lines() {
-            if line.contains(file_name) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if let Some(path) = parts.last() {
-                    let path_str = path.to_string();
-                    if let Some(pos) = path_str.rfind(file_name) {
-                        return Ok(Some(path_str[..pos].to_string()));
-                    }
-                }
-            }
-        }
-        Ok(None)
-    } else {
-        Err(format!("Failed to execute command: {:?}", output).into())
-    }
-}
-
-fn move_folder_contents(src_dir: &Path, dst_dir: &Path) -> Result<(), Box<dyn Error>> {
-    if !src_dir.exists() {
-        return Err(format!("Source directory does not exist: {}", src_dir.display()).into());
-    }
-
-    for entry in fs::read_dir(src_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest_path = dst_dir.join(entry.file_name());
-
-        if path.is_dir() {
-            fs::create_dir_all(&dest_path)?;
-            move_folder_contents(&path, &dest_path)?;
-            fs::remove_dir_all(&path)?;
-        } else {
-            fs::copy(&path, &dest_path)?;
-            fs::remove_file(&path)?;
-        }
-    }
-
-    Ok(())
-}
-
-pub fn extract_specific_folder(
-    archive_path: &str,
-    folder_name: &str,
+    target_filename: &str,
     output_dir: &str,
-    extracted_name: Option<&str>,
-    filter: Option<&str>,
 ) -> Result<(), Box<dyn Error>> {
     create_directory_if_not_exists(output_dir)?;
     let temp_extract_dir = Path::new(output_dir).join("temp_extract");
     create_directory_if_not_exists(temp_extract_dir.to_str().unwrap())?;
-    Command::new("7z")
-        .args(["x", archive_path])
-        .arg(format!("-o{}", temp_extract_dir.to_str().unwrap()))
+
+    let extract_output = Command::new("7z")
+        .args([
+            "x",
+            archive_path,
+            &format!("-o{}", temp_extract_dir.to_str().unwrap()),
+        ])
         .output()?;
 
-    let extracted_folder_path = temp_extract_dir.join(folder_name);
-    let destination = if let Some(extracted_name) = extracted_name {
-        create_directory_if_not_exists(
-            Path::new(output_dir).join(extracted_name).to_str().unwrap(),
-        )?;
-        Path::new(output_dir).join(extracted_name)
-    } else {
-        create_directory_if_not_exists(Path::new(output_dir).join("extracted").to_str().unwrap())?;
-        Path::new(output_dir).join("extracted")
-    };
+    if !extract_output.status.success() {
+        return Err("Archive extraction failed".into());
+    }
 
-    for entry in fs::read_dir(&extracted_folder_path)? {
-        let entry = entry?;
-        let path = entry.path();
-        if let Some(filter) = filter {
-            let file_name = path.file_stem().unwrap().to_str().unwrap();
-            if file_name == filter {
-                let dest_path = destination.join(entry.file_name());
-                if path.is_dir() {
-                    fs::create_dir_all(&dest_path)?;
-                    move_folder_contents(&path, &dest_path)?;
-                    fs::remove_dir_all(&path)?;
-                } else {
-                    fs::copy(&path, &dest_path)?;
-                    fs::remove_file(&path)?;
+    let destination = Path::new(output_dir).join(target_filename);
+    create_directory_if_not_exists(destination.to_str().unwrap())?;
+
+    let mut found_files = Vec::new();
+    find_files_by_basename(&temp_extract_dir, target_filename, &mut found_files)?;
+
+    if found_files.is_empty() {
+        return Err(format!("No files matching '{}' found in archive", target_filename).into());
+    }
+
+    for file_path in &found_files {
+        let file_name = file_path.file_name().unwrap();
+        let dest_path = destination.join(file_name);
+        fs::copy(file_path, dest_path)?;
+    }
+
+    fs::remove_dir_all(temp_extract_dir)?;
+
+    Ok(())
+}
+
+fn find_files_by_basename(
+    dir: &Path,
+    target_basename: &str,
+    result: &mut Vec<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+
+            if path.is_file() {
+                if let Some(file_stem) = path.file_stem() {
+                    if file_stem.to_string_lossy() == target_basename {
+                        result.push(path);
+                    }
                 }
-            }
-        } else {
-            let dest_path = destination.join(entry.file_name());
-            if path.is_dir() {
-                fs::create_dir_all(&dest_path)?;
-                move_folder_contents(&path, &dest_path)?;
-                fs::remove_dir_all(&path)?;
-            } else {
-                fs::copy(&path, &dest_path)?;
-                fs::remove_file(&path)?;
+            } else if path.is_dir() {
+                find_files_by_basename(&path, target_basename, result)?;
             }
         }
     }
 
-    fs::remove_dir_all(temp_extract_dir)?;
     Ok(())
 }
 
@@ -362,12 +296,11 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
     for line in output_str.lines() {
         let project_name = line.trim();
         if project_name != "cache" {
-            let project_path = format!("projects/{}/", project_name);
-            let preview_image_path = format!("{}preview.png", project_path);
-            let project_file_path = format!("{}{}.qgz", project_path, project_name);
+            let project_path = format!("projects/{}", project_name);
+            let preview_image_path = format!("{}/{}_ORTHO.jpeg", project_path, project_name);
             projects.insert(
                 project_name.to_string(),
-                vec![preview_image_path, project_file_path],
+                vec![preview_image_path, project_path],
             );
         }
     }

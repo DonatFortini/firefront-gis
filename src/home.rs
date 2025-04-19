@@ -1,4 +1,4 @@
-use crate::types::Project;
+use crate::types::{AppView, Project, ProjectData, ViewMode};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -6,79 +6,50 @@ use yew::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
+    async fn invoke_without_args(cmd: &str) -> JsValue;
+
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 }
 
-#[function_component(Home)]
-pub fn home() -> Html {
-    // State for projects
-    let projects = use_state(|| {
-        vec![
-            Project {
-                name: "Project 1".to_string(),
-                preview_path: "public/tauri.svg".to_string(),
-                file_path: "projects/project1/project1.qgz".to_string(),
-            },
-            Project {
-                name: "Project 2".to_string(),
-                preview_path: "public/tauri.svg".to_string(),
-                file_path: "projects/project2/project2.qgz".to_string(),
-            },
-            Project {
-                name: "Paris Map".to_string(),
-                preview_path: "public/tauri.svg".to_string(),
-                file_path: "projects/paris_map/paris_map.qgz".to_string(),
-            },
-        ]
-    });
+#[derive(Properties, PartialEq)]
+pub struct HomeProps {
+    pub on_view_change: Callback<AppView>,
+}
 
-    // Load projects on component mount
+#[function_component(Home)]
+pub fn home(props: &HomeProps) -> Html {
+    let projects = use_state(Vec::<Project>::new);
+
     {
         let projects = projects.clone();
-        use_effect(move || {
+        use_effect_with((), move |_| {
             spawn_local(async move {
-                let result = invoke("get_projects", JsValue::NULL).await;
-                if let Some(projects_json) = result.as_string() {
-                    match serde_json::from_str::<HashMap<String, Vec<String>>>(&projects_json) {
-                        Ok(projects_map) => {
-                            let loaded_projects = projects_map
-                                .into_iter()
-                                .filter_map(|(name, paths)| {
-                                    if paths.len() >= 2 {
-                                        Some(Project {
-                                            name,
-                                            preview_path: paths[0].clone(),
-                                            file_path: paths[1].clone(),
-                                        })
-                                    } else {
-                                        None
-                                    }
+                let result = invoke_without_args("get_projects").await;
+                if let Ok(projects_map) =
+                    serde_wasm_bindgen::from_value::<HashMap<String, Vec<String>>>(result)
+                {
+                    let loaded_projects = projects_map
+                        .into_iter()
+                        .filter_map(|(name, paths)| {
+                            if paths.len() >= 2 {
+                                Some(Project {
+                                    name,
+                                    preview_path: paths[0].clone(),
+                                    file_path: paths[1].clone(),
                                 })
-                                .collect::<Vec<Project>>();
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<Project>>();
 
-                            if !loaded_projects.is_empty() {
-                                projects.set(loaded_projects);
-                            }
-                        }
-                        Err(e) => {
-                            // Fallback to trying to parse as a Vec<Project> directly
-                            match serde_json::from_str::<Vec<Project>>(&projects_json) {
-                                Ok(loaded_projects) => {
-                                    if !loaded_projects.is_empty() {
-                                        projects.set(loaded_projects);
-                                    }
-                                }
-                                Err(_) => {
-                                    web_sys::console::error_1(
-                                        &format!("Error parsing projects: {:?}", e).into(),
-                                    );
-                                }
-                            }
-                        }
+                    if !loaded_projects.is_empty() {
+                        projects.set(loaded_projects);
                     }
                 } else {
-                    web_sys::console::error_1(&"Failed to get projects".into());
+                    web_sys::console::error_1(&"Failed to parse projects".into());
                 }
             });
 
@@ -86,10 +57,18 @@ pub fn home() -> Html {
         });
     }
 
-    let on_open_project = Callback::from(|_project: Project| {
-        // TODO: Implement opening a project
-        web_sys::console::log_1(&"Opening project".into());
-    });
+    let on_open_project = {
+        let on_view_change = props.on_view_change.clone();
+        Callback::from(move |project: Project| {
+            let on_view_change = on_view_change.clone();
+            // Navigate to the project view with the selected project data
+            on_view_change.emit(AppView::Project(ProjectData {
+                name: project.name.clone(),
+                file_path: project.file_path.clone(),
+                view_mode: ViewMode::Vegetation,
+            }));
+        })
+    };
 
     html! {
         <div class="home-view">

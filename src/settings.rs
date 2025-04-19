@@ -4,6 +4,9 @@ use yew::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
+    async fn invoke_without_args(cmd: &str) -> JsValue;
+
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 
@@ -21,17 +24,19 @@ pub fn settings() -> Html {
     // Get OS on component mount
     {
         let os = os.clone();
-        use_effect(move || {
+        use_effect_with((), move |_| {
             spawn_local(async move {
-                if let Some(os_value) = invoke("get_os", JsValue::NULL).await.as_string() {
+                if let Some(os_value) = invoke_without_args("get_os").await.as_string() {
                     os.set(os_value);
                 }
             });
 
-            || () // Cleanup function
+            // Cleanup function
+            || ()
         });
     }
 
+    // TODO : Implement fetching GDAL and Python paths
     let on_cache_location_change = {
         let cache_location = cache_location.clone();
         Callback::from(move |e: Event| {

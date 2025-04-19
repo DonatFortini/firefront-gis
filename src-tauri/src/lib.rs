@@ -17,8 +17,7 @@ use tauri::Emitter;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::fs;
 use utils::{
-    extract_specific_folder, find_filepath_in_archive, get_departement_list, get_previous_projects,
-    get_rpg_for_dep_code,
+    extract_files_by_name, get_departement_list, get_previous_projects, get_rpg_for_dep_code,
 };
 use web_request::{download_shp_file, get_departement_shp_file_url};
 
@@ -27,14 +26,28 @@ use web_request::{download_shp_file, get_departement_shp_file_url};
 //TODO : refactor file at the end when everything is working and remake the doc
 
 #[tauri::command]
-/// Create a new project with the given code and name.
+/// Crée un nouveau projet en suivant plusieurs étapes : téléchargement de fichiers,
+/// initialisation du projet, préparation et ajout de couches, exportation d'images,
+/// et nettoyage des fichiers temporaires. Émet également des événements de progression
+/// pour informer l'utilisateur de l'état d'avancement.
 ///
-/// # Parameters
-/// - `code`: A string slice that holds the code of the department.
-/// - `name`: A string slice that holds the name of the project.
+/// # Arguments
 ///
-/// # Returns
-/// - Result<(), String>
+/// * `app_handle` - Une instance de `tauri::AppHandle` utilisée pour interagir avec
+///                  l'application (émission d'événements, affichage de dialogues, etc.).
+/// * `code` - Un code unique utilisé pour identifier les fichiers à télécharger
+///            (par exemple, un code géographique ou un identifiant de projet).
+/// * `name` - Le nom du projet à créer. Ce nom sera utilisé pour nommer le dossier
+///            du projet et les fichiers associés.
+/// * `xmin` - La coordonnée minimale en X (longitude) de la zone géographique du projet.
+/// * `ymin` - La coordonnée minimale en Y (latitude) de la zone géographique du projet.
+/// * `xmax` - La coordonnée maximale en X (longitude) de la zone géographique du projet.
+/// * `ymax` - La coordonnée maximale en Y (latitude) de la zone géographique du projet).
+///
+/// # Retourne
+///
+/// * `Ok(String)` - Le chemin du dossier du projet créé.
+/// * `Err(String)` - Un message d'erreur descriptif en cas de problème.
 async fn open_new_project(
     app_handle: tauri::AppHandle,
     code: String,
@@ -75,6 +88,8 @@ async fn open_new_project(
     }
 
     std::fs::create_dir_all(&project_folder).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(format!("{}/resources", project_folder)).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(format!("{}/slices", project_folder)).map_err(|e| e.to_string())?;
 
     if let Err(e) = create_project(&project_file_path, xmin, ymin, xmax, ymax) {
         return Err(format!("Erreur lors de la création du projet: {:?}", e));
@@ -128,7 +143,7 @@ async fn open_new_project(
 }
 
 #[tauri::command]
-/// Obtenir la liste des départements.
+/// Obtient la liste des départements.
 ///
 /// # Retourne
 /// - HashMap<String, String> : Une hashmap contenant le code et le nom des départements.
@@ -138,7 +153,7 @@ fn get_dpts_list() -> HashMap<String, String> {
 
 #[tauri::command]
 fn get_projects() -> HashMap<String, Vec<String>> {
-    get_previous_projects().unwrap_or_default()
+    get_previous_projects().unwrap()
 }
 
 #[tauri::command]
@@ -279,78 +294,54 @@ async fn prepare_layers(
     code: &str,
 ) -> Result<(), String> {
     let cache_folder_path = "projects/cache".to_string();
+
     let regional_geojson = format!("{}/{}.geojson", cache_folder_path, code);
     if !Path::new(&regional_geojson).exists() {
         let _ = get_regional_extent(code);
     }
 
     let temp_regional_gpkg = format!("/tmp/{}.gpkg", code);
-    let regional_gpkg = format!("{}/{}.gpkg", project_folder, project_name);
+    let regional_gpkg = format!("{}/resources/{}.gpkg", project_folder, project_name);
 
     let _ = convert_to_gpkg(&regional_geojson, &temp_regional_gpkg);
 
     let _ = clip_to_extent(&temp_regional_gpkg, &regional_gpkg, xmin, ymin, xmax, ymax);
 
     let mut layers: HashMap<String, Vec<&str>> = HashMap::new();
-    layers.insert(
-        format!("BDFORET_{}.7z", code),
-        vec!["FORMATION_VEGETALE.shp"],
-    );
-    layers.insert(format!("RPG_{}.7z", code), vec!["PARCELLES_GRAPHIQUES.shp"]);
+    layers.insert(format!("BDFORET_{}.7z", code), vec!["FORMATION_VEGETALE"]);
+    layers.insert(format!("RPG_{}.7z", code), vec!["PARCELLES_GRAPHIQUES"]);
     layers.insert(
         format!("BDTOPO_{}.7z", code),
         vec![
-            "AERODROME.shp",
-            "CONSTRUCTION_SURFACIQUE.shp",
-            "EQUIPEMENT_DE_TRANSPORT.shp",
-            "RESERVOIR.shp",
-            "TERRAIN_DE_SPORT.shp",
-            "TRONCON_DE_VOIE_FERREE.shp",
-            "ZONE_D_ESTRAN.shp",
-            "BATIMENT.shp",
-            "COURS_D_EAU.shp",
-            "PLAN_D_EAU.shp",
-            "SURFACE_HYDROGRAPHIQUE.shp",
-            "TRONCON_DE_ROUTE.shp",
-            "VOIE_NOMMEE.shp",
+            "AERODROME",
+            "CONSTRUCTION_SURFACIQUE",
+            "EQUIPEMENT_DE_TRANSPORT",
+            "RESERVOIR",
+            "TERRAIN_DE_SPORT",
+            "TRONCON_DE_VOIE_FERREE",
+            "ZONE_D_ESTRAN",
+            "BATIMENT",
+            "COURS_D_EAU",
+            "PLAN_D_EAU",
+            "SURFACE_HYDROGRAPHIQUE",
+            "TRONCON_DE_ROUTE",
+            "VOIE_NOMMEE",
         ],
     );
 
     for (archive, files) in layers {
         let archive_path = format!("{}/{}", cache_folder_path, archive);
-
         for file in files {
-            let desired_folder = find_filepath_in_archive(&archive_path, file)
-                .map_err(|e| format!("Erreur lors de la recherche du fichier {} dans l'archive {}: {:?}", file, archive, e))?
-                .as_ref()
-                .map(Path::new)
-                .and_then(Path::parent)
-                .ok_or_else(|| format!("Impossible de trouver le dossier contenant le fichier {} dans l'archive {}", file, archive))?
-                .to_str()
-                .ok_or_else(|| format!("Erreur lors de la conversion du chemin du dossier en chaîne pour le fichier {} dans l'archive {}", file, archive))?
-                .to_string();
-
-            extract_specific_folder(
-                &archive_path,
-                &desired_folder,
-                "tmp",
-                Some(file.split(".").next().unwrap()),
-                None,
-            )
-            .map_err(|e| {
+            extract_files_by_name(&archive_path, file, "tmp").map_err(|e| {
                 format!(
-                    "Erreur lors de l'extraction du fichier {} de l'archive {}: {:?}",
+                    "Erreur lors de l'extraction du fichier {} depuis l'archive {}: {:?}",
                     file, archive, e
                 )
             })?;
 
-            let temp_file = format!("tmp/{}/{}", file.split(".").next().unwrap(), file);
-            let temp_gpkg = format!("tmp/{}.gpkg", file.split(".").next().unwrap());
-            let output_gpkg = format!(
-                "{}/{}.gpkg",
-                project_folder,
-                file.split(".").next().unwrap()
-            );
+            let temp_file = format!("tmp/{}/{}.shp", file, file);
+            let temp_gpkg = format!("tmp/{}.gpkg", file);
+            let output_gpkg = format!("{}/resources/{}.gpkg", project_folder, file);
             if let Err(e) = convert_to_gpkg(&temp_file, &temp_gpkg) {
                 return Err(format!(
                     "Erreur lors de la conversion du fichier {} en GPKG: {:?}",
@@ -383,7 +374,7 @@ fn add_layers(
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = add_regional_layer(
         project_file_path,
-        &format!("{}/{}.gpkg", project_folder, project_name),
+        &format!("{}/resources/{}.gpkg", project_folder, project_name),
     ) {
         println!("Failed to add regional layer: {:?}", e);
         return Err(e);
@@ -413,11 +404,7 @@ fn add_layers(
 
     for (key, value) in layers {
         for file in value {
-            let layer_path = format!(
-                "{}/{}.gpkg",
-                project_folder,
-                file.split('.').next().unwrap()
-            );
+            let layer_path = format!("{}/resources/{}.gpkg", project_folder, file);
             match key {
                 1 => add_vegetation_layer(project_file_path, &layer_path),
                 2 => add_rpg_layer(project_file_path, &layer_path),
