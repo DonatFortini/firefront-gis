@@ -56,23 +56,23 @@ pub fn project(props: &ProjectProps) -> Html {
 
                 <button onclick={on_toggle_view.clone()} class="view-toggle-btn">
                     { match project_data.view_mode {
-                        ViewMode::Vegetation => "Switch to Satellite",
-                        ViewMode::Satellite => "Switch to Vegetation",
+                        ViewMode::Vegetation => "Passer à la vue satellite",
+                        ViewMode::Satellite => "Passer à la vue végétation",
                     }}
                 </button>
 
                 <button  class="export-btn">
-                    {"Export"}
+                    {"Exporter"}
                 </button>
 
                 <button onclick={on_return.clone()} class="return-btn">
-                    {"Return to Home"}
+                    {"Retour à l'accueil"}
                 </button>
             </div>
 
             <div class="project-content">
                 <div class="map-container">
-                    <img src={image_path.clone()} alt={format!("{} map view", project_data.name)} />
+                    <img src={image_path.clone()} alt={format!("Vue cartographique de {}", project_data.name)} />
                 </div>
             </div>
         </div>

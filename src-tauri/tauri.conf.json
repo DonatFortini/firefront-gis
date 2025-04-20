@@ -24,20 +24,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "deb",
-      "dmg",
-      "msi",
-      "rpm",
-      "nsis"
-    ],
+    "targets": ["app", "deb", "dmg", "msi", "rpm", "nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": ["resources/regions.geojson", "projects/**/*.*"]
   }
 }

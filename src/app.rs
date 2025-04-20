@@ -27,10 +27,9 @@ pub fn app() -> Html {
         })
     };
 
-    // Determine whether to show the sidebar based on the current view
     let show_sidebar = match *app_view {
         AppView::Loading(_) | AppView::Project(_) => false,
-        _ => true,
+        AppView::Home | AppView::Settings | AppView::Documentation | AppView::NewProject => true,
     };
 
     html! {

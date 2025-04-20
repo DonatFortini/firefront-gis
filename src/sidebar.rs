@@ -1,5 +1,5 @@
-use yew::prelude::*;
 use crate::types::AppView;
+use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
 pub struct SidebarProps {
@@ -40,34 +40,35 @@ pub fn sidebar(props: &SidebarProps) -> Html {
     html! {
         <div class="sidebar">
             <div class="sidebar-header">
+                <img src="public/icon.png" alt="Firefront GIS Logo" />
                 <h1>{"Firefront GIS"}</h1>
             </div>
             <div class="sidebar-content">
-                <button 
-                    onclick={on_home_click.clone()} 
+                <button
+                    onclick={on_home_click.clone()}
                     class={if props.current_view == AppView::Home { "active" } else { "" }}
                 >
-                    {"Home"}
+                    {"Accueil"}
                 </button>
-                <button 
+                <button
                     onclick={on_new_project_click.clone()}
                     class={if props.current_view == AppView::NewProject { "active" } else { "" }}
                 >
-                    {"Create New Project"}
+                    {"Créer un nouveau projet"}
                 </button>
             </div>
             <div class="sidebar-footer">
-                <button 
+                <button
                     onclick={on_docs_click.clone()}
                     class={if props.current_view == AppView::Documentation { "active" } else { "" }}
                 >
                     {"Documentation"}
                 </button>
-                <button 
+                <button
                     onclick={on_settings_click.clone()}
                     class={if props.current_view == AppView::Settings { "active" } else { "" }}
                 >
-                    {"Settings"}
+                    {"Paramètres"}
                 </button>
             </div>
         </div>

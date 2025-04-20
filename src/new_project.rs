@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use web_sys::HtmlSelectElement;
 use yew::prelude::*;
 
 use crate::types::AppView;
@@ -14,15 +15,6 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
-
-}
-
-#[wasm_bindgen]
-extern "C" {
-    type HtmlSelectElement;
-
-    #[wasm_bindgen(method, getter)]
-    fn value(this: &HtmlSelectElement) -> String;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,82 +38,74 @@ pub fn new_project(props: &NewProjectProps) -> Html {
     let is_loading = use_state(|| false);
     let project_name = use_state(String::new);
     let selected_department = use_state(String::new);
-    let xmin = use_state(|| 0.0);
-    let ymin = use_state(|| 0.0);
-    let xmax = use_state(|| 0.0);
-    let ymax = use_state(|| 0.0);
-    let error_message = use_state(|| None::<String>);
-    let success_message = use_state(|| None::<String>);
-    let is_square = use_state(|| false);
+
+    let xmin_str = use_state(String::new);
+    let ymin_str = use_state(String::new);
+    let xmax_str = use_state(String::new);
+    let ymax_str = use_state(String::new);
+
+    let validation_errors = use_state(|| Vec::<String>::new());
 
     {
         let departments = departments.clone();
-        let error_message = error_message.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
-                let dp = invoke_without_args("get_dpts_list").await;
-                let result: Result<HashMap<String, String>, _> =
-                    serde_wasm_bindgen::from_value(dp.clone());
-
-                match result {
-                    Ok(depts) => departments.set(depts),
-                    Err(err) => {
-                        error_message.set(Some(format!("Failed to fetch departments: {}", err)))
-                    }
+                let result = invoke_without_args("get_dpts_list").await;
+                if let Ok(depts) = serde_wasm_bindgen::from_value(result) {
+                    departments.set(depts);
                 }
             });
-
-            || () // Cleanup function
+            || ()
         });
     }
 
-    let on_project_name_change = {
-        let project_name = project_name.clone();
-        Callback::from(move |e: Event| {
+    fn parse_coordinate(s: &str) -> Option<f64> {
+        if s.trim().is_empty() {
+            None
+        } else {
+            s.parse::<f64>().ok()
+        }
+    }
+
+    let is_valid_square = {
+        let xmin = parse_coordinate(&xmin_str);
+        let ymin = parse_coordinate(&ymin_str);
+        let xmax = parse_coordinate(&xmax_str);
+        let ymax = parse_coordinate(&ymax_str);
+
+        if let (Some(xmin), Some(ymin), Some(xmax), Some(ymax)) = (xmin, ymin, xmax, ymax) {
+            let width = xmax - xmin;
+            let height = ymax - ymin;
+            width > 0.0 && height > 0.0 && (width - height).abs() < 0.0001
+        } else {
+            false
+        }
+    };
+
+    let create_coordinate_handler = |state: UseStateHandle<String>| {
+        Callback::from(move |e: InputEvent| {
             let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-            project_name.set(input.value());
-        })
-    };
+            let value = input.value();
 
-    let on_ymax_change = {
-        let ymax = ymax.clone();
-        Callback::from(move |e: Event| {
-            if let Some(input) = e.target_dyn_into::<web_sys::HtmlInputElement>() {
-                if let Ok(value) = input.value().parse::<f64>() {
-                    ymax.set(value);
-                }
+            if value.is_empty() {
+                state.set(value);
+                return;
             }
-        })
-    };
 
-    let on_xmax_change = {
-        let xmax = xmax.clone();
-        Callback::from(move |e: Event| {
-            if let Some(input) = e.target_dyn_into::<web_sys::HtmlInputElement>() {
-                if let Ok(value) = input.value().parse::<f64>() {
-                    xmax.set(value);
-                }
+            let filtered_value: String = value
+                .chars()
+                .filter(|c| c.is_digit(10) || *c == '.' || (state.is_empty() && *c == '-'))
+                .collect();
+
+            if filtered_value.len() != value.len() {
+                input.set_value(&filtered_value);
             }
-        })
-    };
 
-    let on_xmin_change = {
-        let xmin = xmin.clone();
-        Callback::from(move |e: Event| {
-            if let Some(input) = e.target_dyn_into::<web_sys::HtmlInputElement>() {
-                if let Ok(value) = input.value().parse::<f64>() {
-                    xmin.set(value);
-                }
-            }
-        })
-    };
-
-    let on_ymin_change = {
-        let ymin = ymin.clone();
-        Callback::from(move |e: Event| {
-            if let Some(input) = e.target_dyn_into::<web_sys::HtmlInputElement>() {
-                if let Ok(value) = input.value().parse::<f64>() {
-                    ymin.set(value);
+            if filtered_value.matches('.').count() <= 1 {
+                if filtered_value.matches('-').count() <= 1
+                    && !filtered_value.trim_start_matches('-').contains('-')
+                {
+                    state.set(filtered_value);
                 }
             }
         })
@@ -130,118 +114,161 @@ pub fn new_project(props: &NewProjectProps) -> Html {
     let on_department_change = {
         let selected_department = selected_department.clone();
         Callback::from(move |e: Event| {
-            let target = e.target().unwrap();
-            let select = wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlElement>(target).unwrap();
-            let value = js_sys::Reflect::get(&select, &JsValue::from_str("value"))
-                .unwrap()
-                .as_string()
-                .unwrap_or_default();
-            selected_department.set(value);
+            let select: HtmlSelectElement = e.target_unchecked_into();
+            selected_department.set(select.value());
         })
     };
 
+    let on_project_name_change = {
+        let project_name = project_name.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+            project_name.set(input.value());
+        })
+    };
+
+    let on_xmin_input = create_coordinate_handler(xmin_str.clone());
+    let on_ymin_input = create_coordinate_handler(ymin_str.clone());
+    let on_xmax_input = create_coordinate_handler(xmax_str.clone());
+    let on_ymax_input = create_coordinate_handler(ymax_str.clone());
+
     let on_submit = {
+        let is_loading = is_loading.clone();
+        let validation_errors = validation_errors.clone();
+        let on_view_change = props.on_view_change.clone();
         let project_name = project_name.clone();
         let selected_department = selected_department.clone();
-        let xmin = xmin.clone();
-        let ymin = ymin.clone();
-        let xmax = xmax.clone();
-        let ymax = ymax.clone();
-        let is_loading = is_loading.clone();
-        let error_message = error_message.clone();
-        let on_view_change = props.on_view_change.clone();
+        let xmin_str = xmin_str.clone();
+        let ymin_str = ymin_str.clone();
+        let xmax_str = xmax_str.clone();
+        let ymax_str = ymax_str.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
 
-            if project_name.is_empty() {
-                error_message.set(Some("Project name is required".to_string()));
+            let mut errors = Vec::new();
+
+            if (*selected_department).is_empty() {
+                errors.push("Veuillez sélectionner un département".to_string());
+            }
+
+            if (*project_name).is_empty() {
+                errors.push("Le nom du projet est requis".to_string());
+            }
+
+            let xmin = parse_coordinate(&xmin_str);
+            let ymin = parse_coordinate(&ymin_str);
+            let xmax = parse_coordinate(&xmax_str);
+            let ymax = parse_coordinate(&ymax_str);
+
+            if xmin.is_none() || ymin.is_none() || xmax.is_none() || ymax.is_none() {
+                errors.push(
+                    "Tous les champs de coordonnées doivent être remplis avec des nombres valides"
+                        .to_string(),
+                );
+            } else if let (Some(xmin), Some(ymin), Some(xmax), Some(ymax)) =
+                (xmin, ymin, xmax, ymax)
+            {
+                if xmin == 0.0 && ymin == 0.0 && xmax == 0.0 && ymax == 0.0 {
+                    errors.push(
+                        "Les coordonnées ne peuvent pas toutes être égales à zéro".to_string(),
+                    );
+                } else {
+                    let width = xmax - xmin;
+                    let height = ymax - ymin;
+
+                    if width <= 0.0 || height <= 0.0 {
+                        errors.push("La zone de coordonnées doit avoir des dimensions positives (xmax > xmin, ymax > ymin)".to_string());
+                    } else if (width - height).abs() > 0.0001 {
+                        errors.push(
+                            "La zone de coordonnées doit être un carré (largeur = hauteur)"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+
+            if !errors.is_empty() {
+                validation_errors.set(errors.clone());
                 return;
             }
 
-            if selected_department.is_empty() {
-                error_message.set(Some("Please select a department".to_string()));
-                return;
-            }
-
-            if *xmin == 0.0 || *ymin == 0.0 || *xmax == 0.0 || *ymax == 0.0 {
-                error_message.set(Some("All coordinates must be non-zero.".to_string()));
-                return;
-            }
-
-            let width = ((*xmax as f64) - (*xmin as f64)).abs();
-            let height = ((*ymax as f64) - (*ymin as f64)).abs();
-            if (width - height).abs() >= 0.001 {
-                error_message.set(Some("The coordinate box must be a square.".to_string()));
-                return;
-            }
-
-            error_message.set(None);
+            validation_errors.set(Vec::new());
             is_loading.set(true);
 
             let args = NewProjectArgs {
                 code: (*selected_department).clone(),
                 name: (*project_name).clone(),
-                xmin: *xmin,
-                ymin: *ymin,
-                xmax: *xmax,
-                ymax: *ymax,
+                xmin: xmin.unwrap(),
+                ymin: ymin.unwrap(),
+                xmax: xmax.unwrap(),
+                ymax: ymax.unwrap(),
             };
 
             let project_name_clone = (*project_name).clone();
             let on_view_change = on_view_change.clone();
+            let is_loading = is_loading.clone();
+            let validation_errors = validation_errors.clone();
 
             on_view_change.emit(AppView::Loading(project_name_clone.clone()));
 
             spawn_local(async move {
                 let serialized_args = serde_wasm_bindgen::to_value(&args).unwrap();
-                let _ = invoke("open_new_project", serialized_args).await;
+                let result = invoke("open_new_project", serialized_args).await;
+
+                if let Err(e) = serde_wasm_bindgen::from_value::<()>(result) {
+                    web_sys::console::log_1(&format!("Error: {:?}", e).into());
+                    validation_errors.set(vec![
+                        "Une erreur est survenue lors de la création du projet".to_string(),
+                    ]);
+                    is_loading.set(false);
+                }
             });
         })
     };
 
     html! {
         <div class="new-project-view">
-            <h2>{"Create New Project"}</h2>
+            <h2>{"Créer un nouveau projet"}</h2>
 
-            if let Some(error) = &*error_message {
-                <div class="error-message">{error}</div>
-            }
-
-            if let Some(success) = &*success_message {
-                <div class="success-message">{success}</div>
+            if !validation_errors.is_empty() {
+                <div class="validation-errors">
+                    <ul>
+                        {for validation_errors.iter().map(|error| html! {
+                            <li class="error-message">{error}</li>
+                        })}
+                    </ul>
+                </div>
             }
 
             <form onsubmit={on_submit}>
                 <div class="form-group">
-                    <label for="department">{"Department"}</label>
-                    <select id="department" value={(*selected_department).clone()} onchange={on_department_change}>
-                    if departments.is_empty() {
-                        <option value="">{"Chargement..."}</option>
-                    } else {
-                        <option value="">{"-- Choisir un département --"}</option>
-                    }
-                    {
-                        departments.iter().map(|(code, name)| {
-                            html! {
-                                <option value={code.clone()}>{format!("{} - {}", code, name)}</option>
-                            }
-                        }).collect::<Html>()
-                    }
+                    <label for="department">{"Département"}<span class="required">{"*"}</span></label>
+                    <select
+                        id="department"
+                        value={(*selected_department).clone()}
+                        onchange={on_department_change}
+                    >
+                        <option value="">{"-- Sélectionnez un département --"}</option>
+                        {for departments.iter().map(|(code, name)| html! {
+                            <option value={code.clone()}>{format!("{} - {}", code, name)}</option>
+                        })}
                     </select>
                 </div>
+
                 <div class="form-group">
-                    <label for="project-name">{"Project Name"}</label>
+                    <label for="project-name">{"Nom du projet"}<span class="required">{"*"}</span></label>
                     <input
                         type="text"
                         id="project-name"
                         value={(*project_name).clone()}
-                        onchange={on_project_name_change}
-                        placeholder="Enter project name"
+                        oninput={on_project_name_change}
+                        placeholder="Entrez le nom du projet"
                     />
                 </div>
+
                 <div class="form-group">
-                    <label>{"Coordinates"}</label>
+                    <label>{"Coordonnées"}<span class="required">{"*"}</span></label>
                     <div class="coordinates-cross">
                         <div class="coord-row">
                             <div></div>
@@ -249,10 +276,12 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                                 <label for="ymax">{"Y-Max"}</label>
                                 <input
                                     id="ymax"
-                                    type="number"
+                                    type="text"
+                                    class="coordinate-input"
                                     placeholder="ymax"
-                                    value={(*ymax).to_string()}
-                                    onchange={on_ymax_change}
+                                    value={(*ymax_str).clone()}
+                                    oninput={on_ymax_input}
+                                    inputmode="decimal"
                                 />
                             </div>
                             <div></div>
@@ -262,18 +291,20 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                                 <label for="xmin">{"X-Min"}</label>
                                 <input
                                     id="xmin"
-                                    type="number"
+                                    type="text"
+                                    class="coordinate-input"
                                     placeholder="xmin"
-                                    value={(*xmin).to_string()}
-                                    onchange={on_xmin_change}
+                                    value={(*xmin_str).clone()}
+                                    oninput={on_xmin_input}
+                                    inputmode="decimal"
                                 />
                             </div>
                             <div class="square-indicator">
                                 {
-                                    if *is_square {
+                                    if is_valid_square {
                                         html! { <span class="square-yes">{"Carré ✓"}</span> }
                                     } else {
-                                        html! { <span class="square-no">{"Rectangle ⚠"}</span> }
+                                        html! { <span class="square-no">{"Pas un carré ⚠"}</span> }
                                     }
                                 }
                             </div>
@@ -281,10 +312,12 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                                 <label for="xmax">{"X-Max"}</label>
                                 <input
                                     id="xmax"
-                                    type="number"
+                                    type="text"
+                                    class="coordinate-input"
                                     placeholder="xmax"
-                                    value={(*xmax).to_string()}
-                                    onchange={on_xmax_change}
+                                    value={(*xmax_str).clone()}
+                                    oninput={on_xmax_input}
+                                    inputmode="decimal"
                                 />
                             </div>
                         </div>
@@ -294,22 +327,32 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                                 <label for="ymin">{"Y-Min"}</label>
                                 <input
                                     id="ymin"
-                                    type="number"
+                                    type="text"
+                                    class="coordinate-input"
                                     placeholder="ymin"
-                                    value={(*ymin).to_string()}
-                                    onchange={on_ymin_change}
+                                    value={(*ymin_str).clone()}
+                                    oninput={on_ymin_input}
+                                    inputmode="decimal"
                                 />
                             </div>
                             <div></div>
                         </div>
                     </div>
+                    <div class="coordinate-note">
+                        <p>{"Note : Les coordonnées doivent former une zone carrée (largeur = hauteur) et ne pas être nulles"}</p>
+                    </div>
                 </div>
-                <button type="submit" disabled={*is_loading}>
-                    if *is_loading {
-                        {"Creating Project..."}
+
+                <button
+                    type="submit"
+                    disabled={*is_loading}
+                    class={if *is_loading { "disabled" } else { "" }}
+                >
+                    {if *is_loading {
+                        "Création du projet..."
                     } else {
-                        {"Create Project"}
-                    }
+                        "Créer le projet"
+                    }}
                 </button>
             </form>
         </div>

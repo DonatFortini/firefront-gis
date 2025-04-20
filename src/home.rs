@@ -49,11 +49,11 @@ pub fn home(props: &HomeProps) -> Html {
                         projects.set(loaded_projects);
                     }
                 } else {
-                    web_sys::console::error_1(&"Failed to parse projects".into());
+                    web_sys::console::error_1(&"Échec de l'analyse des projets".into());
                 }
             });
 
-            || () // Cleanup function
+            || ()
         });
     }
 
@@ -61,7 +61,6 @@ pub fn home(props: &HomeProps) -> Html {
         let on_view_change = props.on_view_change.clone();
         Callback::from(move |project: Project| {
             let on_view_change = on_view_change.clone();
-            // Navigate to the project view with the selected project data
             on_view_change.emit(AppView::Project(ProjectData {
                 name: project.name.clone(),
                 file_path: project.file_path.clone(),
@@ -72,7 +71,7 @@ pub fn home(props: &HomeProps) -> Html {
 
     html! {
         <div class="home-view">
-            <h2>{"Previous Projects"}</h2>
+            <h2>{"Projets précédents"}</h2>
             <div class="project-grid">
                 {
                     (*projects).iter().map(|project| {
@@ -86,9 +85,9 @@ pub fn home(props: &HomeProps) -> Html {
                         };
                         html! {
                             <div class="project-card">
-                                <img src={project.preview_path.clone()} alt={format!("{} preview", project.name)} />
+                                <img src={project.preview_path.clone()} alt={format!("Aperçu de {}", project.name)} />
                                 <h3>{&project.name}</h3>
-                                <button onclick={on_click}>{"Open"}</button>
+                                <button onclick={on_click}>{"Ouvrir"}</button>
                             </div>
                         }
                     }).collect::<Html>()

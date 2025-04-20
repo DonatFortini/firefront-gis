@@ -95,7 +95,7 @@ async fn open_new_project(
         return Err(format!("Erreur lors de la création du projet: {:?}", e));
     }
 
-    let _ = app_handle.emit("progress-update", "Preparation des Couches");
+    let _ = app_handle.emit("progress-update", "Préparation des Couches");
 
     prepare_layers(&project_folder, &name, xmin, xmax, ymin, ymax, &code).await?;
 
