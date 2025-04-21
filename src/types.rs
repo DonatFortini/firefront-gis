@@ -6,7 +6,7 @@ pub enum AppView {
     Settings,
     Documentation,
     NewProject,
-    Loading(String), // Project name and data
+    Loading(String),
     Project(ProjectData),
 }
 

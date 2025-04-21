@@ -1,4 +1,6 @@
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 use crate::types::{AppView, ProjectData, ViewMode};
@@ -8,8 +10,8 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "dialog"])]
-    async fn save(args: JsValue) -> JsValue;
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
+    fn convertFileSrc(filePath: &str, protocol: Option<&str>) -> String;
 }
 
 #[derive(Properties, PartialEq)]
@@ -21,14 +23,15 @@ pub struct ProjectProps {
 #[function_component(Project)]
 pub fn project(props: &ProjectProps) -> Html {
     let project_data = use_state(|| props.project_data.clone());
-
     let view_mode = project_data.view_mode.clone();
     let project_name = project_data.name.clone();
 
-    let image_path = match view_mode {
+    let file_path = match view_mode {
         ViewMode::Vegetation => format!("projects/{}/{}_VEGET.jpeg", project_name, project_name),
         ViewMode::Satellite => format!("projects/{}/{}_ORTHO.jpeg", project_name, project_name),
     };
+
+    let image_path = convertFileSrc(&file_path, None);
 
     let on_toggle_view = {
         let project_data = project_data.clone();
@@ -49,6 +52,36 @@ pub fn project(props: &ProjectProps) -> Html {
         })
     };
 
+    #[derive(Serialize)]
+    struct ExportArgs {
+        project_name: String,
+    }
+
+    let on_export = {
+        let project_name = project_data.name.clone();
+        Callback::from(move |_: MouseEvent| {
+            let project_name = project_name.clone();
+            spawn_local(async move {
+                web_sys::window().and_then(|win| win.alert_with_message("Export en cours...").ok());
+                let args = ExportArgs {
+                    project_name: project_name.clone(),
+                };
+                if let Ok(serialized_args) = serde_wasm_bindgen::to_value(&args) {
+                    if let Some(result) = invoke("export", serialized_args).await.as_string() {
+                        let message = format!("Export fini! Retrouvez l'archive à {}", result);
+                        web_sys::window().and_then(|win| win.alert_with_message(&message).ok());
+                    } else {
+                        web_sys::window()
+                            .and_then(|win| win.alert_with_message("Erreur lors de l'export").ok());
+                    }
+                } else {
+                    web_sys::window()
+                        .and_then(|win| win.alert_with_message("Erreur lors de l'export").ok());
+                }
+            });
+        })
+    };
+
     html! {
         <div class="project-view">
             <div class="project-sidebar">
@@ -61,7 +94,7 @@ pub fn project(props: &ProjectProps) -> Html {
                     }}
                 </button>
 
-                <button  class="export-btn">
+                <button onclick={on_export.clone()} class="export-btn">
                     {"Exporter"}
                 </button>
 

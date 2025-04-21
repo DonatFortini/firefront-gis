@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
@@ -14,13 +15,23 @@ extern "C" {
     async fn open(args: JsValue) -> JsValue;
 }
 
+#[derive(Serialize, Deserialize)]
+struct DialogOptions {
+    directory: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_path: Option<String>,
+    title: String,
+}
+
 #[function_component(Settings)]
 pub fn settings() -> Html {
     let os = use_state(|| String::from("Inconnu"));
-    let cache_location = use_state(|| String::from("projects/cache"));
+
+    let output_location = use_state(|| String::new());
     let gdal_path = use_state(|| String::from(""));
     let python_path = use_state(|| String::from(""));
 
+    // Get OS information
     {
         let os = os.clone();
         use_effect_with((), move |_| {
@@ -34,11 +45,28 @@ pub fn settings() -> Html {
         });
     }
 
-    let on_cache_location_change = {
-        let cache_location = cache_location.clone();
+    // Get default directories
+    {
+        let output_location = output_location.clone();
+        use_effect_with((), move |_| {
+            spawn_local(async move {
+                // Get default download directory from Tauri backend
+                if let Ok(args) = serde_wasm_bindgen::to_value(&()) {
+                    if let Some(path) = invoke("get_default_download_dir", args).await.as_string() {
+                        output_location.set(path);
+                    }
+                }
+            });
+
+            || ()
+        });
+    }
+
+    let on_output_location_change = {
+        let output_location = output_location.clone();
         Callback::from(move |e: Event| {
             let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-            cache_location.set(input.value());
+            output_location.set(input.value());
         })
     };
 
@@ -58,13 +86,22 @@ pub fn settings() -> Html {
         })
     };
 
-    let on_browse_cache = {
-        let cache_location = cache_location.clone();
+    let on_browse_output = {
+        let output_location = output_location.clone();
         Callback::from(move |_| {
-            let cache_location = cache_location.clone();
+            let output_location = output_location.clone();
             spawn_local(async move {
-                web_sys::console::log_1(&"Parcourir pour l'emplacement du cache".into());
-                cache_location.set(String::from("projects/cache"));
+                let options = DialogOptions {
+                    directory: true,
+                    default_path: Some((*output_location).clone()),
+                    title: String::from("Sélectionner un dossier de sortie"),
+                };
+
+                if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
+                    if let Some(selected_path) = open(args).await.as_string() {
+                        output_location.set(selected_path);
+                    }
+                }
             });
         })
     };
@@ -74,8 +111,21 @@ pub fn settings() -> Html {
         Callback::from(move |_| {
             let gdal_path = gdal_path.clone();
             spawn_local(async move {
-                web_sys::console::log_1(&"Parcourir pour le chemin GDAL".into());
-                gdal_path.set(String::from("/usr/local/bin/gdal"));
+                let options = DialogOptions {
+                    directory: false,
+                    default_path: if gdal_path.is_empty() {
+                        None
+                    } else {
+                        Some((*gdal_path).clone())
+                    },
+                    title: String::from("Sélectionner l'exécutable GDAL"),
+                };
+
+                if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
+                    if let Some(selected_path) = open(args).await.as_string() {
+                        gdal_path.set(selected_path);
+                    }
+                }
             });
         })
     };
@@ -85,15 +135,34 @@ pub fn settings() -> Html {
         Callback::from(move |_| {
             let python_path = python_path.clone();
             spawn_local(async move {
-                web_sys::console::log_1(&"Parcourir pour le chemin Python".into());
-                python_path.set(String::from("/usr/bin/python3"));
+                let options = DialogOptions {
+                    directory: false,
+                    default_path: if python_path.is_empty() {
+                        None
+                    } else {
+                        Some((*python_path).clone())
+                    },
+                    title: String::from("Sélectionner l'exécutable Python"),
+                };
+
+                if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
+                    if let Some(selected_path) = open(args).await.as_string() {
+                        python_path.set(selected_path);
+                    }
+                }
             });
         })
     };
 
+    let on_clear_cache = Callback::from(|_| {
+        spawn_local(async {
+            invoke_without_args("clear_cache").await;
+        });
+    });
+
+    // TODO Implement settings saving logic with invoke
     let on_submit = Callback::from(|e: SubmitEvent| {
         e.prevent_default();
-        web_sys::console::log_1(&"Sauvegarde des paramètres".into());
     });
 
     html! {
@@ -104,15 +173,15 @@ pub fn settings() -> Html {
             </div>
             <form onsubmit={on_submit}>
                 <div class="form-group">
-                    <label for="cache-location">{"Emplacement du cache"}</label>
+                    <label for="output-location">{"Emplacement de sortie"}</label>
                     <div class="input-with-button">
                         <input
                             type="text"
-                            id="cache-location"
-                            value={(*cache_location).clone()}
-                            onchange={on_cache_location_change}
+                            id="output-location"
+                            value={(*output_location).clone()}
+                            onchange={on_output_location_change}
                         />
-                        <button type="button" onclick={on_browse_cache}>{"Parcourir"}</button>
+                        <button type="button" onclick={on_browse_output}>{"Parcourir"}</button>
                     </div>
                 </div>
                 <div class="form-group">
@@ -141,7 +210,10 @@ pub fn settings() -> Html {
                         <button type="button" onclick={on_browse_python}>{"Parcourir"}</button>
                     </div>
                 </div>
-                <button type="submit">{"Sauvegarder les paramètres"}</button>
+                <div class="button-group">
+                    <button type="submit">{"Sauvegarder les paramètres"}</button>
+                    <button type="button" onclick={on_clear_cache}>{"Vider le cache"}</button>
+                </div>
             </form>
         </div>
     }

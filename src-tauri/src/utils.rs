@@ -144,13 +144,6 @@ lazy_static! {
         ("04", vec!["974"]),
         ("06", vec!["976"]),
     ]);
-    pub static ref VULCAIN_COLORS: Vec<(u8, u8, u8)> = vec![
-        (0, 0, 0),
-        (4, 25, 30),
-        (25, 50, 60),
-        (50, 200, 80),
-        (80, 200, 120)
-    ];
 }
 
 pub fn get_departement_list() -> HashMap<String, String> {
@@ -218,6 +211,7 @@ pub fn compress_folder(
     Ok(())
 }
 
+// TODO : add a find closest filename
 pub fn extract_files_by_name(
     archive_path: &str,
     target_filename: &str,

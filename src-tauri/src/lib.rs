@@ -161,19 +161,9 @@ fn get_os() -> String {
     utils::get_operating_system().to_string()
 }
 
-// TODO : reimplement with gdalinfo
 #[tauri::command]
-fn get_project_layers(
-    _project_path: &str,
-) -> Result<HashMap<String, HashMap<String, String>>, String> {
-    // Mock implementation
-    let mut layers = HashMap::new();
-    let mut layer_details = HashMap::new();
-    layer_details.insert("type".to_string(), "vegetation".to_string());
-    layer_details.insert("status".to_string(), "loaded".to_string());
-    layers.insert("layer1".to_string(), layer_details);
-
-    Ok(layers)
+fn export(project_name: &str) {
+    export_project(project_name);
 }
 
 //---------------------------------------------------------main---------------------------------------------------------
@@ -189,7 +179,7 @@ pub fn run() {
             get_dpts_list,
             get_projects,
             get_os,
-            get_project_layers
+            export
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -19,7 +19,13 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["projects/**/*"]
+        }
+      }
     }
   },
   "bundle": {
@@ -32,6 +38,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/regions.geojson", "projects/**/*.*"]
+    "resources": ["resources/regions.geojson", "projects/**/*"]
   }
 }

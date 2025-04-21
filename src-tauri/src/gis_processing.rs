@@ -9,6 +9,8 @@ use std::env::current_dir;
 use std::fs;
 use std::process::Command;
 
+use crate::utils::create_directory_if_not_exists;
+
 /// Crée un projet de carte avec une résolution donnée (10m/pixel)
 /// et calcule la taille de l'image en fonction des coordonnées
 /// xmin, ymin, xmax, ymax
@@ -425,17 +427,6 @@ where
     Ok(())
 }
 
-/// Crée le répertoire temporaire s'il n'existe pas déjà
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si la création a réussi ou échoué
-///
-fn ensure_tmp_dir() -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all("tmp")?;
-    Ok(())
-}
-
 /// Ajoute une couche départementale à un projet
 ///
 /// # Arguments
@@ -451,7 +442,7 @@ pub fn add_regional_layer(
     project_file_path: &str,
     regional_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_tmp_dir()?;
+    create_directory_if_not_exists("tmp")?;
 
     let project = Dataset::open(project_file_path)?;
     let regional_dataset = Dataset::open(regional_gpkg)?;
@@ -490,7 +481,7 @@ pub fn add_rpg_layer(
     project_file_path: &str,
     rpg_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_tmp_dir()?;
+    create_directory_if_not_exists("tmp")?;
 
     let project = Dataset::open(project_file_path)?;
     let rpg_dataset = Dataset::open(rpg_gpkg)?;
@@ -529,8 +520,7 @@ pub fn add_vegetation_layer(
     project_file_path: &str,
     vegetation_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_tmp_dir()?;
-
+    create_directory_if_not_exists("tmp")?;
     let vegetation_dataset = Dataset::open(vegetation_gpkg)?;
     let vegetation_layer = vegetation_dataset.layer(0)?;
     let project = Dataset::open(project_file_path)?;
@@ -694,7 +684,7 @@ pub fn add_topo_layer(
     project_file_path: &str,
     topo_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_tmp_dir()?;
+    create_directory_if_not_exists("tmp")?;
 
     let project = Dataset::open(project_file_path)?;
     let topo_dataset = Dataset::open(topo_gpkg)?;
@@ -921,7 +911,7 @@ pub fn download_satellite_jpeg(
     xmax: f64,
     ymax: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_tmp_dir()?;
+    create_directory_if_not_exists("tmp")?;
 
     let resolution = 10.0;
     let width = ((xmax - xmin) / resolution).ceil() as usize;

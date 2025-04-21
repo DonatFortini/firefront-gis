@@ -11,6 +11,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
+    fn convertFileSrc(filePath: &str, protocol: Option<&str>) -> String;
 }
 
 #[derive(Properties, PartialEq)]
@@ -76,6 +79,7 @@ pub fn home(props: &HomeProps) -> Html {
                 {
                     (*projects).iter().map(|project| {
                         let project_clone = project.clone();
+                        let converted_preview_path = convertFileSrc(&project.preview_path, None);
                         let on_click = {
                             let on_open = on_open_project.clone();
                             let project = project_clone.clone();
@@ -85,7 +89,7 @@ pub fn home(props: &HomeProps) -> Html {
                         };
                         html! {
                             <div class="project-card">
-                                <img src={project.preview_path.clone()} alt={format!("Aperçu de {}", project.name)} />
+                                <img src={converted_preview_path} alt={format!("Aperçu de {}", project.name)} />
                                 <h3>{&project.name}</h3>
                                 <button onclick={on_click}>{"Ouvrir"}</button>
                             </div>
