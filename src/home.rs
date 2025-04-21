@@ -10,9 +10,6 @@ extern "C" {
     async fn invoke_without_args(cmd: &str) -> JsValue;
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
-
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     fn convertFileSrc(filePath: &str, protocol: Option<&str>) -> String;
 }
 

@@ -5,6 +5,7 @@ mod tests {
         convert_to_gpkg, create_project, download_satellite_jpeg, export_to_jpg,
         get_regional_extent,
     };
+    use firefront_gis_lib::slicing::get_project_bounding_box;
     use firefront_gis_lib::utils::extract_files_by_name;
     use gdal::vector::LayerAccess;
     use gdal::Dataset;
@@ -376,5 +377,31 @@ mod tests {
 
         dataset1.close().unwrap();
         dataset2.close().unwrap();
+    }
+
+    #[test]
+    fn test_get_bounding_box() {
+        let project_name = "porto-vecchio";
+
+        let result = get_project_bounding_box(project_name);
+        assert_result_ok(&result, "Getting bounding box failed");
+
+        let coordinates = result.unwrap();
+        assert_eq!(
+            coordinates.upper_left.0, 1210000.0,
+            "Upper left X coordinate mismatch"
+        );
+        assert_eq!(
+            coordinates.upper_left.1, 6095000.0,
+            "Upper left Y coordinate mismatch"
+        );
+        assert_eq!(
+            coordinates.lower_left.0, 1210000.0,
+            "Lower left X coordinate mismatch"
+        );
+        assert_eq!(
+            coordinates.lower_left.1, 6070000.0,
+            "Lower left Y coordinate mismatch"
+        );
     }
 }

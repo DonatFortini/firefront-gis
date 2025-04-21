@@ -5,6 +5,8 @@ use firefront_gis_lib::web_request;
 #[cfg(test)]
 mod tests {
 
+    use firefront_gis_lib::slicing;
+
     use super::*;
 
     #[test]
@@ -108,6 +110,19 @@ mod tests {
             }
             Err(e) => {
                 panic!("Download failed: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_slices() {
+        let project_name = "porto-vecchio";
+        match slicing::slice_images(project_name, 500) {
+            Ok(_) => {
+                assert!(std::path::Path::new(&format!("projects/{}/slices", project_name)).exists())
+            }
+            Err(e) => {
+                panic!("Slicing failed: {:?}", e);
             }
         }
     }

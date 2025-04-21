@@ -38,6 +38,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/regions.geojson", "projects/**/*"]
+    "resources": ["resources/regions.geojson"]
   }
 }

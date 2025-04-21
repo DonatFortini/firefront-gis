@@ -74,7 +74,7 @@ fn loading_progress_bar(props: &LoadingProgressBarProps) -> Html {
 struct LoadingProgressBarProps {
     percentage: u8,
 }
-
+// TODO : add sub tasks
 fn get_progress_percentage(message: &str) -> u8 {
     match message {
         "Recherche des fichiers" => 10,

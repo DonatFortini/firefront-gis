@@ -44,7 +44,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
     let xmax_str = use_state(String::new);
     let ymax_str = use_state(String::new);
 
-    let validation_errors = use_state(|| Vec::<String>::new());
+    let validation_errors = use_state(Vec::<String>::new);
 
     {
         let departments = departments.clone();
@@ -94,19 +94,18 @@ pub fn new_project(props: &NewProjectProps) -> Html {
 
             let filtered_value: String = value
                 .chars()
-                .filter(|c| c.is_digit(10) || *c == '.' || (state.is_empty() && *c == '-'))
+                .filter(|c| c.is_ascii_digit() || *c == '.' || (state.is_empty() && *c == '-'))
                 .collect();
 
             if filtered_value.len() != value.len() {
                 input.set_value(&filtered_value);
             }
 
-            if filtered_value.matches('.').count() <= 1 {
-                if filtered_value.matches('-').count() <= 1
-                    && !filtered_value.trim_start_matches('-').contains('-')
-                {
-                    state.set(filtered_value);
-                }
+            if filtered_value.matches('.').count() <= 1
+                && filtered_value.matches('-').count() <= 1
+                && !filtered_value.trim_start_matches('-').contains('-')
+            {
+                state.set(filtered_value);
             }
         })
     };

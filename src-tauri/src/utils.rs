@@ -304,3 +304,23 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
 pub fn get_operating_system() -> &'static str {
     std::env::consts::OS
 }
+
+pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
+    let project_path = format!("projects/{}", project_name);
+    let export_path = format!("exports/{}", project_name);
+    fs::create_dir_all(&export_path)?;
+
+    let preview_image_path = format!("{}/{}_ORTHO.jpeg", project_path, project_name);
+    let preview_image = fs::read(&preview_image_path)?;
+    fs::write(format!("{}/preview.jpeg", export_path), preview_image)?;
+
+    let project_files = fs::read_dir(&project_path)?;
+    for entry in project_files {
+        let path = entry?.path();
+        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+        let export_file_path = format!("{}/{}", export_path, file_name);
+        fs::copy(&path, &export_file_path)?;
+    }
+
+    Ok(())
+}

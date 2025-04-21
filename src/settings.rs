@@ -1,15 +1,14 @@
+use directories::UserDirs;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use yew::prelude::*;
 
+use yew::prelude::*;
+// FIXME :: fix the path cross platform issue and implement functionanlity
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
     async fn invoke_without_args(cmd: &str) -> JsValue;
-
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "dialog"])]
     async fn open(args: JsValue) -> JsValue;
@@ -27,11 +26,19 @@ struct DialogOptions {
 pub fn settings() -> Html {
     let os = use_state(|| String::from("Inconnu"));
 
-    let output_location = use_state(|| String::new());
+    let download_dir = match UserDirs::new() {
+        Some(dirs) => dirs.download_dir().map(|p| p.to_path_buf()),
+        None => xdg_user::UserDirs::new()
+            .unwrap()
+            .downloads()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Some(std::path::PathBuf::from("caca"))),
+    };
+
+    let output_location = use_state(move || download_dir.clone());
     let gdal_path = use_state(|| String::from(""));
     let python_path = use_state(|| String::from(""));
 
-    // Get OS information
     {
         let os = os.clone();
         use_effect_with((), move |_| {
@@ -45,28 +52,11 @@ pub fn settings() -> Html {
         });
     }
 
-    // Get default directories
-    {
-        let output_location = output_location.clone();
-        use_effect_with((), move |_| {
-            spawn_local(async move {
-                // Get default download directory from Tauri backend
-                if let Ok(args) = serde_wasm_bindgen::to_value(&()) {
-                    if let Some(path) = invoke("get_default_download_dir", args).await.as_string() {
-                        output_location.set(path);
-                    }
-                }
-            });
-
-            || ()
-        });
-    }
-
     let on_output_location_change = {
         let output_location = output_location.clone();
         Callback::from(move |e: Event| {
             let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-            output_location.set(input.value());
+            output_location.set(Some(std::path::PathBuf::from(input.value())));
         })
     };
 
@@ -88,18 +78,22 @@ pub fn settings() -> Html {
 
     let on_browse_output = {
         let output_location = output_location.clone();
+
         Callback::from(move |_| {
             let output_location = output_location.clone();
+            let default_path =
+                UserDirs::new().map(|dirs| dirs.home_dir().to_string_lossy().to_string());
+
             spawn_local(async move {
                 let options = DialogOptions {
                     directory: true,
-                    default_path: Some((*output_location).clone()),
+                    default_path,
                     title: String::from("Sélectionner un dossier de sortie"),
                 };
 
                 if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
                     if let Some(selected_path) = open(args).await.as_string() {
-                        output_location.set(selected_path);
+                        output_location.set(Some(std::path::PathBuf::from(selected_path)));
                     }
                 }
             });
@@ -160,7 +154,6 @@ pub fn settings() -> Html {
         });
     });
 
-    // TODO Implement settings saving logic with invoke
     let on_submit = Callback::from(|e: SubmitEvent| {
         e.prevent_default();
     });
@@ -178,7 +171,7 @@ pub fn settings() -> Html {
                         <input
                             type="text"
                             id="output-location"
-                            value={(*output_location).clone()}
+                            value={output_location.as_ref().and_then(|path| path.to_str()).unwrap_or("").to_string()}
                             onchange={on_output_location_change}
                         />
                         <button type="button" onclick={on_browse_output}>{"Parcourir"}</button>

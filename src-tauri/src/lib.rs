@@ -17,7 +17,8 @@ use tauri::Emitter;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::fs;
 use utils::{
-    extract_files_by_name, get_departement_list, get_previous_projects, get_rpg_for_dep_code,
+    export_project, extract_files_by_name, get_departement_list, get_previous_projects,
+    get_rpg_for_dep_code,
 };
 use web_request::{download_shp_file, get_departement_shp_file_url};
 
@@ -163,7 +164,10 @@ fn get_os() -> String {
 
 #[tauri::command]
 fn export(project_name: &str) {
-    export_project(project_name);
+    match export_project(project_name) {
+        Ok(_) => println!("Exportation réussie"),
+        Err(e) => println!("Erreur lors de l'exportation: {:?}", e),
+    }
 }
 
 //---------------------------------------------------------main---------------------------------------------------------
