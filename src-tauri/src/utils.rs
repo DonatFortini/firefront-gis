@@ -4,6 +4,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use xdg_user;
+
+use crate::slicing::slice_images;
 
 lazy_static! {
     pub static ref DEPARTEMENTS: HashMap<String, String> = [
@@ -115,7 +118,9 @@ lazy_static! {
     pub static ref RPG_DEP: HashMap<&'static str, Vec<&'static str>> = HashMap::from([
         (
             "84",
-            vec!["1", "3", "7", "15", "26", "38", "42", "43", "63", "69", "73", "74"]
+            vec![
+                "1", "3", "7", "15", "26", "38", "42", "43", "63", "69", "73", "74"
+            ]
         ),
         ("27", vec!["21", "25", "39", "58", "70", "71", "89", "90"]),
         ("53", vec!["22", "29", "35", "56"]),
@@ -130,11 +135,15 @@ lazy_static! {
         ("28", vec!["14", "27", "50", "61", "76"]),
         (
             "75",
-            vec!["16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87"]
+            vec![
+                "16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87"
+            ]
         ),
         (
             "76",
-            vec!["9", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"]
+            vec![
+                "9", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"
+            ]
         ),
         ("52", vec!["44", "49", "53", "72", "85"]),
         ("93", vec!["4", "5", "6", "13", "83", "84"]),
@@ -144,6 +153,21 @@ lazy_static! {
         ("04", vec!["974"]),
         ("06", vec!["976"]),
     ]);
+    pub static ref OUTPUT_DIR: std::sync::Mutex<PathBuf> = {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let output_dir = directories::UserDirs::new()
+            .unwrap()
+            .download_dir()
+            .expect("Failed to get download directory")
+            .to_path_buf();
+        #[cfg(target_os = "linux")]
+        let output_dir = xdg_user::UserDirs::new()
+            .unwrap()
+            .downloads()
+            .expect("Failed to get downloads directory")
+            .to_path_buf();
+        std::sync::Mutex::new(output_dir)
+    };
 }
 
 pub fn get_departement_list() -> HashMap<String, String> {
@@ -157,11 +181,7 @@ pub fn get_departement_name(code: &str) -> Option<String> {
 pub fn get_departement_code(name: &str) -> Option<String> {
     DEPARTEMENTS.iter().find_map(
         |(code, n)| {
-            if n == name {
-                Some(code.clone())
-            } else {
-                None
-            }
+            if n == name { Some(code.clone()) } else { None }
         },
     )
 }
@@ -191,21 +211,20 @@ pub fn create_directory_if_not_exists(path: &str) -> Result<(), Box<dyn Error>> 
 }
 
 pub fn compress_folder(
-    folder_directory_path: &str,
-    folder_name: &str,
-    destination_directory_path: Option<&str>,
+    source_folder_path: &str,
+    output_zip_name: &str,
+    destination_directory: &str,
 ) -> Result<(), Box<dyn Error>> {
+    let output_zip_path = format!("{}/{}.zip", destination_directory, output_zip_name);
+
     let mut command = Command::new("7z");
-    command.arg("a");
-
-    let archive_path = format!("{}.zip", folder_name);
-
-    command.arg(&archive_path);
-    command.current_dir(destination_directory_path.unwrap_or(folder_directory_path));
-    command.arg(folder_name);
+    command.args(["a", &output_zip_path]);
+    command.current_dir(source_folder_path);
+    command.arg(".");
     let output = command.output()?;
+
     if !output.status.success() {
-        return Err(format!("Failed to execute command: {:?}", output).into());
+        return Err(format!("Failed to execute 7z command: {:?}", output).into());
     }
 
     Ok(())
@@ -307,20 +326,19 @@ pub fn get_operating_system() -> &'static str {
 
 pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
     let project_path = format!("projects/{}", project_name);
-    let export_path = format!("exports/{}", project_name);
-    fs::create_dir_all(&export_path)?;
-
-    let preview_image_path = format!("{}/{}_ORTHO.jpeg", project_path, project_name);
-    let preview_image = fs::read(&preview_image_path)?;
-    fs::write(format!("{}/preview.jpeg", export_path), preview_image)?;
-
-    let project_files = fs::read_dir(&project_path)?;
-    for entry in project_files {
-        let path = entry?.path();
-        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
-        let export_file_path = format!("{}/{}", export_path, file_name);
-        fs::copy(&path, &export_file_path)?;
+    let date = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    match slice_images(project_name, 500) {
+        Ok(_) => {
+            compress_folder(
+                &project_path,
+                &format!("export_{}_{}", project_name, date),
+                OUTPUT_DIR.lock().unwrap().to_str().unwrap(),
+            )?;
+            Ok(())
+        }
+        Err(_) => Err(format!("Echec découpage: {}", project_name).into()),
     }
-
-    Ok(())
 }

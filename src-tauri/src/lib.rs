@@ -162,11 +162,17 @@ fn get_os() -> String {
     utils::get_operating_system().to_string()
 }
 
-#[tauri::command]
-fn export(project_name: &str) {
+#[tauri::command(rename_all = "snake_case")]
+fn export(project_name: &str) -> Result<String, String> {
     match export_project(project_name) {
-        Ok(_) => println!("Exportation réussie"),
-        Err(e) => println!("Erreur lors de l'exportation: {:?}", e),
+        Ok(_) => {
+            println!("Exportation réussie");
+            Ok("success".to_string())
+        }
+        Err(e) => {
+            println!("Erreur lors de l'exportation: {:?}", e);
+            Err("error".to_string())
+        }
     }
 }
 

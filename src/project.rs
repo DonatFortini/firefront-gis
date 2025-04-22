@@ -62,21 +62,27 @@ pub fn project(props: &ProjectProps) -> Html {
         Callback::from(move |_: MouseEvent| {
             let project_name = project_name.clone();
             spawn_local(async move {
-                web_sys::window().and_then(|win| win.alert_with_message("Export en cours...").ok());
                 let args = ExportArgs {
                     project_name: project_name.clone(),
                 };
                 if let Ok(serialized_args) = serde_wasm_bindgen::to_value(&args) {
                     if let Some(result) = invoke("export", serialized_args).await.as_string() {
-                        let message = format!("Export fini! Retrouvez l'archive à {}", result);
-                        web_sys::window().and_then(|win| win.alert_with_message(&message).ok());
-                    } else {
-                        web_sys::window()
-                            .and_then(|win| win.alert_with_message("Erreur lors de l'export").ok());
+                        match result.as_str() {
+                            "success" => {
+                                web_sys::window()
+                                    .unwrap()
+                                    .alert_with_message("Exportation réussie")
+                                    .unwrap();
+                            }
+                            "error" => {
+                                web_sys::window()
+                                    .unwrap()
+                                    .alert_with_message("Erreur lors de l'exportation")
+                                    .unwrap();
+                            }
+                            _ => {}
+                        }
                     }
-                } else {
-                    web_sys::window()
-                        .and_then(|win| win.alert_with_message("Erreur lors de l'export").ok());
                 }
             });
         })

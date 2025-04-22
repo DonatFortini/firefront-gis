@@ -1,4 +1,3 @@
-use directories::UserDirs;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -26,14 +25,8 @@ struct DialogOptions {
 pub fn settings() -> Html {
     let os = use_state(|| String::from("Inconnu"));
 
-    let download_dir = match UserDirs::new() {
-        Some(dirs) => dirs.download_dir().map(|p| p.to_path_buf()),
-        None => xdg_user::UserDirs::new()
-            .unwrap()
-            .downloads()
-            .map(|p| p.to_path_buf())
-            .or_else(|| Some(std::path::PathBuf::from("caca"))),
-    };
+    // TODO : Implement a way to detect the os path
+    let download_dir = "/Downloads".to_string();
 
     let output_location = use_state(move || download_dir.clone());
     let gdal_path = use_state(|| String::from(""));
@@ -56,7 +49,7 @@ pub fn settings() -> Html {
         let output_location = output_location.clone();
         Callback::from(move |e: Event| {
             let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-            output_location.set(Some(std::path::PathBuf::from(input.value())));
+            output_location.set(input.value());
         })
     };
 
@@ -81,19 +74,18 @@ pub fn settings() -> Html {
 
         Callback::from(move |_| {
             let output_location = output_location.clone();
-            let default_path =
-                UserDirs::new().map(|dirs| dirs.home_dir().to_string_lossy().to_string());
+            let default_path = "/Downloads".to_string();
 
             spawn_local(async move {
                 let options = DialogOptions {
                     directory: true,
-                    default_path,
+                    default_path: Some(default_path),
                     title: String::from("Sélectionner un dossier de sortie"),
                 };
 
                 if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
                     if let Some(selected_path) = open(args).await.as_string() {
-                        output_location.set(Some(std::path::PathBuf::from(selected_path)));
+                        output_location.set(selected_path);
                     }
                 }
             });
@@ -171,7 +163,7 @@ pub fn settings() -> Html {
                         <input
                             type="text"
                             id="output-location"
-                            value={output_location.as_ref().and_then(|path| path.to_str()).unwrap_or("").to_string()}
+                            value={(*output_location).clone()}
                             onchange={on_output_location_change}
                         />
                         <button type="button" onclick={on_browse_output}>{"Parcourir"}</button>
