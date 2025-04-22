@@ -1,10 +1,11 @@
-use gdal::spatial_ref::SpatialRef;
-use gdal::vector::LayerAccess;
 use gdal::Dataset;
 use gdal::DriverManager;
-use gdal_sys::OGRwkbGeometryType;
-use serde_json::json;
+use gdal::spatial_ref::SpatialRef;
+use gdal::vector::LayerAccess;
+use gdal::vector::OGRwkbGeometryType;
+
 use serde_json::Value;
+use serde_json::json;
 use std::env::current_dir;
 use std::fs;
 use std::process::Command;
@@ -197,7 +198,6 @@ pub fn clip_to_extent(
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'extraction a réussi ou échoué
-///
 pub fn get_regional_extent(regional_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let binding = current_dir()?.join("resources/regions.geojson");
     let regional_geojson_path = binding.to_str().unwrap();
@@ -831,11 +831,7 @@ pub fn add_topo_layer(
                 .zip(mask.iter())
                 .map(
                     |(&base_value, &mask_value)| {
-                        if mask_value {
-                            0
-                        } else {
-                            base_value
-                        }
+                        if mask_value { 0 } else { base_value }
                     },
                 )
                 .collect::<Vec<u8>>()
