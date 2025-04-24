@@ -198,6 +198,13 @@ fn get_os() -> String {
 }
 
 #[tauri::command(rename_all = "snake_case")]
+/// Exporte un projet, fais la decoupe puis le zip
+///
+/// # Paramètres
+/// - project_name: &str : Le nom du projet à exporter.
+///
+/// # Retourne
+/// - Result<String, String> : Un résultat contenant le message de succès ou l'erreur.
 fn export(project_name: &str) -> Result<String, String> {
     match export_project(project_name) {
         Ok(_) => {
@@ -207,6 +214,38 @@ fn export(project_name: &str) -> Result<String, String> {
         Err(e) => {
             println!("Erreur lors de l'exportation: {:?}", e);
             Err("error".to_string())
+        }
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+/// Supprime un projet existant.
+///
+/// # Arguments
+///
+/// * `project_name` - Le nom du projet à supprimer.
+///
+/// # Retourne
+///
+/// * `Ok(String)` - "success" si la suppression a réussi.
+/// * `Err(String)` - Un message d'erreur descriptif en cas de problème.
+async fn delete_project(project_name: &str) -> Result<String, String> {
+    let project_folder = format!("projects/{}", project_name);
+    if !std::path::Path::new(&project_folder).exists() {
+        return Err(format!("Le projet '{}' n'existe pas", project_name));
+    }
+
+    match tokio::fs::remove_dir_all(&project_folder).await {
+        Ok(_) => {
+            println!("Projet '{}' supprimé avec succès", project_name);
+            Ok("success".to_string())
+        }
+        Err(e) => {
+            println!(
+                "Erreur lors de la suppression du projet '{}': {:?}",
+                project_name, e
+            );
+            Err(format!("Erreur lors de la suppression du projet: {}", e))
         }
     }
 }
@@ -224,7 +263,8 @@ pub fn run() {
             get_dpts_list,
             get_projects,
             get_os,
-            export
+            export,
+            delete_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

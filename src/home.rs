@@ -9,6 +9,9 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
     async fn invoke_without_args(cmd: &str) -> JsValue;
 
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
+    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     fn convertFileSrc(filePath: &str, protocol: Option<&str>) -> String;
 }
@@ -21,38 +24,12 @@ pub struct HomeProps {
 #[function_component(Home)]
 pub fn home(props: &HomeProps) -> Html {
     let projects = use_state(Vec::<Project>::new);
+    let delete_in_progress = use_state(|| false);
 
     {
         let projects = projects.clone();
         use_effect_with((), move |_| {
-            spawn_local(async move {
-                let result = invoke_without_args("get_projects").await;
-                if let Ok(projects_map) =
-                    serde_wasm_bindgen::from_value::<HashMap<String, Vec<String>>>(result)
-                {
-                    let loaded_projects = projects_map
-                        .into_iter()
-                        .filter_map(|(name, paths)| {
-                            if paths.len() >= 2 {
-                                Some(Project {
-                                    name,
-                                    preview_path: paths[0].clone(),
-                                    file_path: paths[1].clone(),
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<Project>>();
-
-                    if !loaded_projects.is_empty() {
-                        projects.set(loaded_projects);
-                    }
-                } else {
-                    web_sys::console::error_1(&"Échec de l'analyse des projets".into());
-                }
-            });
-
+            load_projects(projects);
             || ()
         });
     }
@@ -66,6 +43,44 @@ pub fn home(props: &HomeProps) -> Html {
                 file_path: project.file_path.clone(),
                 view_mode: ViewMode::Vegetation,
             }));
+        })
+    };
+
+    let on_delete_project = {
+        let projects = projects.clone();
+        let delete_in_progress = delete_in_progress.clone();
+        Callback::from(move |project_name: String| {
+            let projects = projects.clone();
+            let delete_in_progress = delete_in_progress.clone();
+
+            if *delete_in_progress {
+                return;
+            }
+
+            delete_in_progress.set(true);
+
+            spawn_local(async move {
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                    "project_name": project_name
+                }))
+                .unwrap();
+
+                match invoke("delete_project", args).await {
+                    response => {
+                        if let Ok(result) = serde_wasm_bindgen::from_value::<String>(response) {
+                            if result == "success" {
+                                load_projects(projects.clone());
+                            } else {
+                                web_sys::console::error_1(
+                                    &format!("Erreur lors de la suppression: {}", result).into(),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                delete_in_progress.set(false);
+            });
         })
     };
 
@@ -84,11 +99,21 @@ pub fn home(props: &HomeProps) -> Html {
                                 on_open.emit(project.clone());
                             })
                         };
+                        let on_delete = {
+                            let on_delete_project = on_delete_project.clone();
+                            let project_name = project.name.clone();
+                            Callback::from(move |_: MouseEvent| {
+                                on_delete_project.emit(project_name.clone());
+                            })
+                        };
                         html! {
                             <div class="project-card">
                                 <img src={converted_preview_path} alt={format!("Aperçu de {}", project.name)} />
                                 <h3>{&project.name}</h3>
-                                <button onclick={on_click}>{"Ouvrir"}</button>
+                                <div class="project-card-actions">
+                                    <button class="open-btn" onclick={on_click}>{"Ouvrir"}</button>
+                                    <button class="delete-btn" onclick={on_delete}>{"Supprimer"}</button>
+                                </div>
                             </div>
                         }
                     }).collect::<Html>()
@@ -96,4 +121,34 @@ pub fn home(props: &HomeProps) -> Html {
             </div>
         </div>
     }
+}
+
+fn load_projects(projects: UseStateHandle<Vec<Project>>) {
+    spawn_local(async move {
+        let result = invoke_without_args("get_projects").await;
+        if let Ok(projects_map) =
+            serde_wasm_bindgen::from_value::<HashMap<String, Vec<String>>>(result)
+        {
+            let loaded_projects = projects_map
+                .into_iter()
+                .filter_map(|(name, paths)| {
+                    if paths.len() >= 2 {
+                        Some(Project {
+                            name,
+                            preview_path: paths[0].clone(),
+                            file_path: paths[1].clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<Project>>();
+
+            if !loaded_projects.is_empty() {
+                projects.set(loaded_projects);
+            }
+        } else {
+            web_sys::console::error_1(&"Échec de l'analyse des projets".into());
+        }
+    });
 }

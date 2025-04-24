@@ -324,11 +324,37 @@ h3 {
     font-weight: 600;
     color: var(--text-primary);
     border-bottom: 1px solid var(--border-color);
+    margin-bottom: 0;
 }
 
-.project-card button {
-    width: 100%;
+.project-card-actions {
+    display: flex;
+    gap: 8px;
     padding: 12px;
+}
+
+.project-card-actions button {
+    flex: 1;
+    padding: 10px 8px;
+    font-size: 0.85rem;
+}
+
+.open-btn {
+    background-color: var(--accent-primary);
+    color: white;
+}
+
+.open-btn:hover {
+    background-color: var(--accent-secondary);
+}
+
+.delete-btn {
+    background-color: var(--error-color);
+    color: white;
+}
+
+.delete-btn:hover {
+    background-color: #c0392b;
 }
 
 form {
@@ -399,6 +425,20 @@ label {
     color: var(--text-secondary);
     margin: 16px 0;
     font-size: 1rem;
+}
+
+.subtask-message {
+    color: var(--text-tertiary);
+    margin: 8px 0;
+    font-size: 0.9rem;
+    font-style: italic;
+}
+
+.subtask-count {
+    color: var(--accent-primary);
+    margin: 8px 0;
+    font-size: 0.85rem;
+    font-weight: 600;
 }
 
 .percentage {
@@ -804,6 +844,15 @@ select:focus-visible {
 
     .return-btn {
         margin-top: 0;
+    }
+
+    .project-card-actions {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .project-card-actions button {
+        width: 100%;
     }
 }
 
