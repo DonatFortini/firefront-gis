@@ -245,6 +245,15 @@ pub fn new_project(props: &NewProjectProps) -> Html {
         })
     };
 
+    let sorted_departments = {
+        let mut dept_list: Vec<(String, String)> = departments
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        dept_list.sort_by(|(a_key, _), (b_key, _)| a_key.cmp(b_key));
+        dept_list
+    };
+
     html! {
         <div class="new-project-view">
             <h2>{"Créer un nouveau projet"}</h2>
@@ -268,9 +277,11 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                         onchange={on_department_change}
                     >
                         <option value="">{"-- Sélectionnez un département --"}</option>
-                        {for departments.iter().map(|(code, name)| html! {
+                        {
+                            for sorted_departments.iter().map(|(code, name)| html! {
                             <option value={code.clone()}>{format!("{} - {}", code, name)}</option>
-                        })}
+                            })
+                        }
                     </select>
                 </div>
 
