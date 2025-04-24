@@ -8,6 +8,7 @@ use serde_json::Value;
 use serde_json::json;
 use std::env::current_dir;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use crate::utils::create_directory_if_not_exists;
@@ -46,7 +47,6 @@ use crate::utils::create_directory_if_not_exists;
 ///}
 ///
 /// ```
-///
 pub fn create_project(
     project_file_path: &str,
     xmin: f64,
@@ -57,13 +57,12 @@ pub fn create_project(
     let resolution = 10.0;
     let width = ((xmax - xmin) / resolution).ceil() as usize;
     let height = ((ymax - ymin) / resolution).ceil() as usize;
-
-    if width != height {
-        return Err("Width and height must be equal for square project".into());
+    if !(width % 500 == 0 && height % 500 == 0) {
+        return Err("Width and height must be multiples of 500".into());
     }
 
     let driver = DriverManager::get_driver_by_name("GTiff")?;
-    let mut dataset = driver.create(project_file_path, height, width, 4)?;
+    let mut dataset = driver.create(project_file_path, width, height, 4)?;
     let geotransform = [xmin, resolution, 0.0, ymax, 0.0, -resolution];
     dataset.set_geo_transform(&geotransform)?;
     let srs = SpatialRef::from_epsg(2154)?;
@@ -454,7 +453,7 @@ pub fn add_regional_layer(
         regional_gpkg,
         &regional_layer.name(),
         temp_layer,
-        ["4", "25", "30"],
+        ["0", "0", "0"],
         None,
         None,
     )?;
@@ -861,6 +860,7 @@ pub fn add_topo_layer(
 
 /// Exporte un projet en format JPEG
 /// Cette fonction est utilisée pour créer une image JPEG à partir d'un projet GDAL.
+/// Utilise ImageMagick pour exporter un projet en JPEG. (Compatibilité avec le simulateur)
 ///
 /// # Arguments
 ///
@@ -874,12 +874,12 @@ pub fn export_to_jpg(
     project_file_path: &str,
     output_jpg_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new("gdal_translate")
-        .args(["-of", "JPEG", project_file_path, output_jpg_path])
+    let magick_status = Command::new("magick")
+        .args([project_file_path, output_jpg_path])
         .status()?;
 
-    if !status.success() {
-        return Err("Failed to export to JPEG".into());
+    if !magick_status.success() {
+        return Err("Failed to export to JPEG using ImageMagick".into());
     }
 
     Ok(())
@@ -887,6 +887,7 @@ pub fn export_to_jpg(
 
 /// Télécharge une image satellite JPEG pour une étendue donnée avec une résolution de 10m/pixel
 /// Cette fonction utilise le service WMS de geoportail pour télécharger une image satellite
+/// et utilise ImageMagick pour traiter l'image.
 ///
 /// # Arguments
 ///
@@ -908,6 +909,7 @@ pub fn download_satellite_jpeg(
     ymax: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     create_directory_if_not_exists("tmp")?;
+    create_directory_if_not_exists("tmp/wms_cache")?;
 
     let resolution = 10.0;
     let width = ((xmax - xmin) / resolution).ceil() as usize;
@@ -919,10 +921,7 @@ pub fn download_satellite_jpeg(
     );
 
     let temp_satellite = "tmp/satellite_temp.tif";
-    let temp_satellite_expanded = "tmp/satellite_expanded.tif";
-    let temp_satellite_color_fixed = "tmp/satellite_color_fixed.tif";
     let wms_file = "tmp/wms_config.xml";
-
     let wms_xml = format!(
         r#"<GDAL_WMS>
       <Service name="WMS">
@@ -942,75 +941,36 @@ pub fn download_satellite_jpeg(
         <SizeY>{}</SizeY>
       </DataWindow>
       <BandsCount>3</BandsCount>
-      <BlockSizeX>2500</BlockSizeX>
-      <BlockSizeY>2500</BlockSizeY>
+      <BlockSizeX>2048</BlockSizeX>
+      <BlockSizeY>2048</BlockSizeY>
       <OverviewCount>0</OverviewCount>
-      <ZeroBlockHttpCodes>204,400,404</ZeroBlockHttpCodes>
-      <MaxConnections>5</MaxConnections>
-      <Timeout>60</Timeout>
+      <ZeroBlockHttpCodes>204,400,404,502,503,504</ZeroBlockHttpCodes>
+      <MaxConnections>10</MaxConnections>
+      <Timeout>120</Timeout>
       <Cache>
         <Type>Disk</Type>
         <Path>tmp/wms_cache</Path>
-        <MaxSize>200000000</MaxSize>
+        <MaxSize>500000000</MaxSize>
       </Cache>
+      <UserAgent>GDAL WMS driver (https://gdal.org/drivers/raster/wms.html)</UserAgent>
+      <UnsafeSSL>true</UnsafeSSL>
+      <Retry>
+        <Count>5</Count>
+        <Delay>1</Delay>
+      </Retry>
     </GDAL_WMS>"#,
         xmin, ymax, xmax, ymin, width, height
     );
 
     std::fs::write(wms_file, wms_xml)?;
 
-    let status = Command::new("gdal_translate")
-        .args([
-            "-of",
-            "GTiff",
-            "-co",
-            "COMPRESS=JPEG",
-            "-co",
-            "JPEG_QUALITY=95",
-            "-co",
-            "BLOCKYSIZE=2500",
-            "-co",
-            "PHOTOMETRIC=RGB",
-            wms_file,
-            temp_satellite,
-        ])
-        .status()?;
+    let mut success = false;
+    let mut attempts = 0;
+    let max_attempts = 3;
 
-    if !status.success() {
-        println!("La première source a échoué, essai avec SCAN1000_PYR-JPEG_WLD_WM...");
-
-        let wms_xml_scan = format!(
-            r#"<GDAL_WMS>
-          <Service name="WMS">
-            <Version>1.3.0</Version>
-            <ServerUrl>https://data.geopf.fr/wms-r/wms</ServerUrl>
-            <CRS>EPSG:3857</CRS>
-            <ImageFormat>image/jpeg</ImageFormat>
-            <Layers>SCAN1000_PYR-JPEG_WLD_WM</Layers>
-            <Styles></Styles>
-          </Service>
-          <DataWindow>
-            <UpperLeftX>{}</UpperLeftX>
-            <UpperLeftY>{}</UpperLeftY>
-            <LowerRightX>{}</LowerRightX>
-            <LowerRightY>{}</LowerRightY>
-            <SizeX>{}</SizeX>
-            <SizeY>{}</SizeY>
-          </DataWindow>
-          <BandsCount>3</BandsCount>
-          <BlockSizeX>2500</BlockSizeX>
-          <BlockSizeY>2500</BlockSizeY>
-          <ZeroBlockHttpCodes>204,400,404</ZeroBlockHttpCodes>
-          <Cache>
-            <Type>Disk</Type>
-            <Path>tmp/wms_cache</Path>
-            <MaxSize>200000000</MaxSize>
-          </Cache>
-        </GDAL_WMS>"#,
-            xmin, ymax, xmax, ymin, width, height
-        );
-
-        std::fs::write(wms_file, wms_xml_scan)?;
+    while !success && attempts < max_attempts {
+        attempts += 1;
+        println!("Tentative de téléchargement {}/{}", attempts, max_attempts);
 
         let status = Command::new("gdal_translate")
             .args([
@@ -1021,171 +981,56 @@ pub fn download_satellite_jpeg(
                 "-co",
                 "JPEG_QUALITY=95",
                 "-co",
-                "BLOCKYSIZE=2500",
-                "-co",
                 "PHOTOMETRIC=RGB",
+                "-co",
+                "BIGTIFF=YES",
                 wms_file,
                 temp_satellite,
             ])
             .status()?;
 
-        if !status.success() {
-            return Err("Échec du téléchargement de l'image satellite".into());
+        if status.success() {
+            success = true;
+        } else if attempts < max_attempts {
+            println!("Échec, nouvelle tentative dans 5 secondes...");
+            std::thread::sleep(std::time::Duration::from_secs(5));
         }
     }
 
-    let info = Command::new("gdalinfo").args([temp_satellite]).output()?;
-
-    if info.status.success() {
-        let info_text = String::from_utf8_lossy(&info.stdout);
-        println!("Information TIFF téléchargé:\n{}", info_text);
-        if info_text.contains("Size is")
-            && !info_text.contains(&format!("Size is {}, {}", width, height))
-        {
-            println!("L'image téléchargée n'a pas les bonnes dimensions. Extension de l'image...");
-
-            let status = Command::new("gdal_translate")
-                .args([
-                    "-of",
-                    "GTiff",
-                    "-outsize",
-                    &width.to_string(),
-                    &height.to_string(),
-                    "-co",
-                    "COMPRESS=JPEG",
-                    "-co",
-                    "JPEG_QUALITY=95",
-                    "-co",
-                    "PHOTOMETRIC=RGB",
-                    temp_satellite,
-                    temp_satellite_expanded,
-                ])
-                .status()?;
-
-            if status.success() {
-                std::fs::rename(temp_satellite_expanded, temp_satellite)?;
-            } else {
-                let status = Command::new("gdal_create")
-                    .args([
-                        "-of",
-                        "GTiff",
-                        "-outsize",
-                        &width.to_string(),
-                        &height.to_string(),
-                        "-bands",
-                        "3",
-                        "-burn",
-                        "128",
-                        "-burn",
-                        "128",
-                        "-burn",
-                        "128",
-                        "-a_srs",
-                        "EPSG:2154",
-                        "-a_ullr",
-                        &xmin.to_string(),
-                        &ymax.to_string(),
-                        &xmax.to_string(),
-                        &ymin.to_string(),
-                        "-co",
-                        "COMPRESS=JPEG",
-                        "-co",
-                        "JPEG_QUALITY=95",
-                        "-co",
-                        "PHOTOMETRIC=RGB",
-                        temp_satellite_expanded,
-                    ])
-                    .status()?;
-
-                if status.success() {
-                    std::fs::rename(temp_satellite_expanded, temp_satellite)?;
-                }
-            }
-        }
+    if !success {
+        return Err(
+            "Échec du téléchargement de l'image satellite après plusieurs tentatives".into(),
+        );
     }
 
-    let status = Command::new("gdal_translate")
+    let metadata = fs::metadata(temp_satellite)?;
+    if metadata.len() == 0 {
+        return Err("Le fichier téléchargé est vide".into());
+    }
+
+    let temp_jpg = "tmp/satellite_temp.jpg";
+
+    let magick_status = Command::new("magick")
         .args([
-            "-of",
-            "GTiff",
-            "-b",
-            "1",
-            "-b",
-            "2",
-            "-b",
-            "3",
-            "-scale",
-            "-co",
-            "COMPRESS=JPEG",
-            "-co",
-            "JPEG_QUALITY=95",
-            "-co",
-            "PHOTOMETRIC=RGB",
             temp_satellite,
-            temp_satellite_color_fixed,
+            "-resize",
+            &format!("{}x{}", width, height),
+            "-colorspace",
+            "sRGB",
+            "-type",
+            "TrueColor",
+            temp_jpg,
         ])
         .status()?;
 
-    if status.success() {
-        std::fs::rename(temp_satellite_color_fixed, temp_satellite)?;
+    if !magick_status.success() {
+        return Err("Échec de la conversion en JPEG avec ImageMagick".into());
     }
 
-    let status = Command::new("gdal_translate")
-        .args([
-            "--config",
-            "GDAL_PAM_ENABLED",
-            "NO",
-            "-of",
-            "JPEG",
-            "-outsize",
-            &width.to_string(),
-            &height.to_string(),
-            "-co",
-            "QUALITY=95",
-            "-b",
-            "1",
-            "-b",
-            "2",
-            "-b",
-            "3",
-            temp_satellite,
-            output_jpg_path,
-        ])
-        .status()?;
-
-    if !status.success() {
-        return Err("Échec de la conversion en JPEG".into());
-    }
-
-    let info = Command::new("gdalinfo").args([output_jpg_path]).output()?;
-
-    if info.status.success() {
-        let info_text = String::from_utf8_lossy(&info.stdout);
-        println!("Information JPEG final:\n{}", info_text);
-        if info_text.contains("Size is")
-            && !info_text.contains(&format!("Size is {}, {}", width, height))
-        {
-            println!("Le JPEG final n'a pas les bonnes dimensions. Création d'un nouveau JPEG...");
-
-            let temp_jpg = "tmp/output_correct_size.jpg";
-            let status = Command::new("magick")
-                .args([
-                    temp_satellite,
-                    "-resize",
-                    &format!("{}x{}", width, height),
-                    "-colorspace",
-                    "sRGB",
-                    "-type",
-                    "TrueColor",
-                    temp_jpg,
-                ])
-                .status();
-
-            if status.is_ok() && status.unwrap().success() {
-                std::fs::copy(temp_jpg, output_jpg_path)?;
-                std::fs::remove_file(temp_jpg)?;
-            }
-        }
+    if Path::new(temp_jpg).exists() {
+        std::fs::rename(temp_jpg, output_jpg_path)?;
+    } else {
+        return Err("Le fichier JPEG temporaire n'a pas été créé".into());
     }
 
     std::fs::remove_file(temp_satellite)?;

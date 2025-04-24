@@ -461,6 +461,10 @@ label {
     color: var(--success-color);
 }
 
+.square-warning {
+    color: var(--warning-color);
+}
+
 .square-no {
     color: var(--error-color);
 }

@@ -1,8 +1,16 @@
+use chrono::NaiveDate;
 use futures_util::StreamExt;
+use regex::Regex;
 use reqwest;
 use scraper::{Html, Selector};
 use std::{error::Error, fs, path::Path};
 use tokio::{fs::File, io::AsyncWriteExt};
+
+pub enum DBType {
+    FORET,
+    TOPO,
+    RPG,
+}
 
 /// Obtient l'URL d'un fichier SHP depuis la base de données IGN.
 /// Cherche l'url le plus récent pour le département spécifié.
@@ -12,36 +20,63 @@ use tokio::{fs::File, io::AsyncWriteExt};
 ///
 /// # Retourne
 /// - Une tranche de chaîne représentant l'URL de l'archive du fichier SHP correspondant au département.
-pub async fn get_departement_shp_file_url(
-    code: &str,
-    url: &str,
-    code_type: Option<&str>,
-) -> Result<String, Box<dyn Error>> {
+pub async fn get_departement_shp_file_url(code: &str, url: &str) -> Result<String, Box<dyn Error>> {
     let body = reqwest::get(url).await?.text().await?;
     let document = Html::parse_document(&body);
     let selector = Selector::parse("a")?;
 
-    let code_prefix = code_type.unwrap_or("D0");
+    let dbtype = match true {
+        _ if url.contains("bdforet#") => DBType::FORET,
+        _ if url.contains("bdtopo#") => DBType::TOPO,
+        _ if url.contains("rpg#") => DBType::RPG,
+        _ => return Err("Unsupported database type".into()),
+    };
 
-    let mut shp_files: Vec<_> = document
+    let code_prefix = match dbtype {
+        DBType::RPG => "R",
+        _ => "D0",
+    };
+
+    let mut shp_files: Vec<String> = document
         .select(&selector)
         .filter_map(|element| element.value().attr("href"))
         .filter(|href| href.contains(&format!("{}{}", code_prefix, code)) && href.contains("SHP"))
+        .map(|s| s.to_string())
         .collect();
 
     if shp_files.is_empty() {
         return Err("No file found".into());
     }
 
-    shp_files.sort_by_key(|href| {
-        href.split('_')
-            .next_back()
-            .and_then(|s| s.split('.').next())
-            .unwrap_or("")
-            .to_string()
+    if matches!(dbtype, DBType::FORET) {
+        shp_files.retain(|file| file.contains("BDFORET_2-0"));
+
+        if shp_files.is_empty() {
+            return Err("No BDFORET V2 file found".into());
+        }
+    }
+
+    let date_regex = Regex::new(r"(\d{4}-\d{2}-\d{2})").unwrap();
+
+    shp_files.sort_by(|a, b| {
+        let date_a = date_regex
+            .captures(a)
+            .and_then(|cap| cap.get(1))
+            .and_then(|m| NaiveDate::parse_from_str(m.as_str(), "%Y-%m-%d").ok())
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+
+        let date_b = date_regex
+            .captures(b)
+            .and_then(|cap| cap.get(1))
+            .and_then(|m| NaiveDate::parse_from_str(m.as_str(), "%Y-%m-%d").ok())
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+        date_b.cmp(&date_a)
     });
 
-    Ok(shp_files.pop().unwrap().to_string())
+    match shp_files.first() {
+        Some(url) => Ok(url.clone()),
+        None => Err("No valid file URL found after filtering".into()),
+    }
 }
 
 /// Télécharge un fichier depuis une URL donnée et l'enregistre à l'emplacement spécifié.

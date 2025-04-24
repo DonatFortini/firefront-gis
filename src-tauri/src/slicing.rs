@@ -1,11 +1,13 @@
 use crate::utils::create_directory_if_not_exists;
 use image::GenericImageView;
 use serde_json::Value;
+use std::fs;
 use std::process::Command;
 
 pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String> {
     let project_path = format!("projects/{}/", project_name);
     let slice_path = format!("projects/{}/slices/", project_name);
+    fs::remove_dir_all(&slice_path).map_err(|e| format!("Failed to remove directory: {}", e))?;
     create_directory_if_not_exists(&slice_path)
         .map_err(|e| format!("Failed to create directory: {}", e))?;
 
@@ -43,12 +45,12 @@ pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String>
             let coord_y = base_y + (height - img_y - slice_factor) / 100;
 
             let veget_path = format!(
-                "{}/{}_{}_veget_{}.jpeg",
+                "{}/{}_{}_veget_{}.jpg",
                 slice_path, coord_x, coord_y, slice_factor
             );
 
             let ortho_path = format!(
-                "{}/{}_{}_{}.jpeg",
+                "{}/{}_{}_{}.jpg",
                 slice_path, coord_x, coord_y, slice_factor
             );
 
@@ -59,6 +61,16 @@ pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String>
             cropped_ortho
                 .save(&ortho_path)
                 .map_err(|e| format!("Failed to save ORTHO slice: {}", e))?;
+
+            Command::new("magick")
+                .args(["convert", &veget_path, "-enhance", &veget_path])
+                .output()
+                .map_err(|e| format!("Failed to process VEGET slice with ImageMagick: {}", e))?;
+
+            Command::new("magick")
+                .args(["convert", &ortho_path, "-enhance", &ortho_path])
+                .output()
+                .map_err(|e| format!("Failed to process ORTHO slice with ImageMagick: {}", e))?;
         }
     }
 

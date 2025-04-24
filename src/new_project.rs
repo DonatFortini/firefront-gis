@@ -67,7 +67,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
         }
     }
 
-    let is_valid_square = {
+    let is_valid_shape = {
         let xmin = parse_coordinate(&xmin_str);
         let ymin = parse_coordinate(&ymin_str);
         let xmax = parse_coordinate(&xmax_str);
@@ -76,9 +76,24 @@ pub fn new_project(props: &NewProjectProps) -> Html {
         if let (Some(xmin), Some(ymin), Some(xmax), Some(ymax)) = (xmin, ymin, xmax, ymax) {
             let width = xmax - xmin;
             let height = ymax - ymin;
-            width > 0.0 && height > 0.0 && (width - height).abs() < 0.0001
+            if width <= 0.0 || height <= 0.0 {
+                "invalid"
+            } else {
+                let width_is_valid = (width / 10.0) % 500.0 == 0.0;
+                let height_is_valid = (height / 10.0) % 500.0 == 0.0;
+
+                if width_is_valid && height_is_valid {
+                    if width - height == 0.0 {
+                        "square"
+                    } else {
+                        "rectangle"
+                    }
+                } else {
+                    "invalid"
+                }
+            }
         } else {
-            false
+            "invalid"
         }
     };
 
@@ -178,11 +193,15 @@ pub fn new_project(props: &NewProjectProps) -> Html {
 
                     if width <= 0.0 || height <= 0.0 {
                         errors.push("La zone de coordonnées doit avoir des dimensions positives (xmax > xmin, ymax > ymin)".to_string());
-                    } else if (width - height).abs() > 0.0001 {
-                        errors.push(
-                            "La zone de coordonnées doit être un carré (largeur = hauteur)"
-                                .to_string(),
-                        );
+                    } else {
+                        let width_is_valid = (width / 10.0) % 500.0 == 0.0;
+                        let height_is_valid = (height / 10.0) % 500.0 == 0.0;
+
+                        if !width_is_valid || !height_is_valid {
+                            errors.push(
+                                "Les dimensions doivent être des multiples de 500".to_string(),
+                            );
+                        }
                     }
                 }
             }
@@ -300,10 +319,12 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                             </div>
                             <div class="square-indicator">
                                 {
-                                    if is_valid_square {
+                                    if is_valid_shape == "square" {
                                         html! { <span class="square-yes">{"Carré ✓"}</span> }
+                                    } else if is_valid_shape == "rectangle" {
+                                        html! { <span class="square-yes">{"Rectangle !"}</span> }
                                     } else {
-                                        html! { <span class="square-no">{"Pas un carré ⚠"}</span> }
+                                        html! { <span class="square-no">{"Invalide ⚠"}</span> }
                                     }
                                 }
                             </div>
@@ -338,7 +359,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                         </div>
                     </div>
                     <div class="coordinate-note">
-                        <p>{"Note : Les coordonnées doivent former une zone carrée (largeur = hauteur) et ne pas être nulles"}</p>
+                        <p>{"Note : Les dimensions de la zone (largeur et hauteur) doivent être des multiples de 500"}</p>
                     </div>
                 </div>
 

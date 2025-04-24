@@ -230,7 +230,6 @@ pub fn compress_folder(
     Ok(())
 }
 
-// TODO : add a find closest filename
 pub fn extract_files_by_name(
     archive_path: &str,
     target_filename: &str,

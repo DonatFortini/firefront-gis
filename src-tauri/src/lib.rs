@@ -24,8 +24,6 @@ use web_request::{download_shp_file, get_departement_shp_file_url};
 
 //---------------------------------------------------------tauri commands---------------------------------------------------------
 
-//TODO : refactor file at the end when everything is working and remake the doc
-
 #[tauri::command]
 /// Crée un nouveau projet en suivant plusieurs étapes : téléchargement de fichiers,
 /// initialisation du projet, préparation et ajout de couches, exportation d'images,
@@ -206,7 +204,6 @@ async fn get_shp_file_urls(code: &str) -> Result<Vec<String>, String> {
     let url1 = get_departement_shp_file_url(
         code,
         "https://geoservices.ign.fr/bdtopo#telechargementgpkgreg",
-        None,
     )
     .await
     .map_err(|e| {
@@ -215,24 +212,20 @@ async fn get_shp_file_urls(code: &str) -> Result<Vec<String>, String> {
             e
         )
     })?;
-    let url2 = get_departement_shp_file_url(
-        code,
-        "https://geoservices.ign.fr/bdforet#telechargementv2",
-        None,
-    )
-    .await
-    .map_err(|e| {
-        format!(
-            "Erreur lors de la récupération de l'URL du fichier Foret : {:?}",
-            e
-        )
-    })?;
+    let url2 =
+        get_departement_shp_file_url(code, "https://geoservices.ign.fr/bdforet#telechargementv2")
+            .await
+            .map_err(|e| {
+                format!(
+                    "Erreur lors de la récupération de l'URL du fichier Foret : {:?}",
+                    e
+                )
+            })?;
 
     let rpg_code = get_rpg_for_dep_code(code).unwrap();
     let url3 = get_departement_shp_file_url(
         rpg_code,
         "https://geoservices.ign.fr/rpg#telechargementrpg2023",
-        Some("R"),
     )
     .await
     .map_err(|e| {

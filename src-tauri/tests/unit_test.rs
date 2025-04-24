@@ -28,7 +28,6 @@ mod tests {
         let result = web_request::get_departement_shp_file_url(
             "2A",
             "https://geoservices.ign.fr/bdforet#telechargementv2",
-            None,
         )
         .await;
         assert_eq!(
@@ -42,7 +41,6 @@ mod tests {
         let result = web_request::get_departement_shp_file_url(
             "99",
             "https://geoservices.ign.fr/bdforet#telechargementv2",
-            None,
         )
         .await;
         assert!(result.is_err());
@@ -54,12 +52,11 @@ mod tests {
         let result = web_request::get_departement_shp_file_url(
             "2A",
             "https://geoservices.ign.fr/bdtopo#telechargementgpkgreg",
-            None,
         )
         .await;
         assert_eq!(
             result.unwrap(),
-            "https://data.geopf.fr/telechargement/download/BDTOPO/BDTOPO_3-4_TOUSTHEMES_SHP_LAMB93_D02A_2024-06-15/BDTOPO_3-4_TOUSTHEMES_SHP_LAMB93_D02A_2024-06-15.7z"
+            "https://data.geopf.fr/telechargement/download/BDTOPO/BDTOPO_3-4_TOUSTHEMES_SHP_LAMB93_D02A_2025-03-15/BDTOPO_3-4_TOUSTHEMES_SHP_LAMB93_D02A_2025-03-15.7z"
         );
     }
 
@@ -68,7 +65,6 @@ mod tests {
         let result = web_request::get_departement_shp_file_url(
             "99",
             "https://geoservices.ign.fr/bdtopo#telechargementgpkgreg",
-            None,
         )
         .await;
         assert!(result.is_err());
