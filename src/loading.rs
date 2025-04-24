@@ -15,6 +15,8 @@ struct ProgressState {
     message: String,
     percentage: u8,
     error: Option<String>,
+    subtask: Option<String>,
+    subtask_count: Option<(usize, usize)>, // (current, total)
 }
 
 impl Default for ProgressState {
@@ -23,6 +25,8 @@ impl Default for ProgressState {
             message: "Initialisation du projet...".to_string(),
             percentage: 0,
             error: None,
+            subtask: None,
+            subtask_count: None,
         }
     }
 }
@@ -49,6 +53,24 @@ pub fn loading(props: &LoadingProps) -> Html {
                 <h3>{&props.project_name}</h3>
                 <LoadingProgressBar percentage={progress_state.percentage} />
                 <p class="status-message">{&progress_state.message}</p>
+                {
+                    if let Some(subtask) = &progress_state.subtask {
+                        html! {
+                            <p class="subtask-message">{subtask}</p>
+                        }
+                    } else {
+                        html! {}
+                    }
+                }
+                {
+                    if let Some((current, total)) = progress_state.subtask_count {
+                        html! {
+                            <p class="subtask-count">{format!("({}/{})", current, total)}</p>
+                        }
+                    } else {
+                        html! {}
+                    }
+                }
                 <p class="percentage">{format!("{}%", progress_state.percentage)}</p>
                 {progress_state.error.as_ref().map(|error| html! {
                     <p class="error-message">{error}</p>
@@ -74,7 +96,7 @@ fn loading_progress_bar(props: &LoadingProgressBarProps) -> Html {
 struct LoadingProgressBarProps {
     percentage: u8,
 }
-// TODO : add sub tasks
+
 fn get_progress_percentage(message: &str) -> u8 {
     match message {
         "Recherche des fichiers" => 10,
@@ -89,6 +111,34 @@ fn get_progress_percentage(message: &str) -> u8 {
     }
 }
 
+fn parse_progress_message(payload: &str) -> (String, Option<String>, Option<(usize, usize)>) {
+    let parts: Vec<&str> = payload.split('|').collect();
+    let main_message = parts.get(0).map_or("", |s| *s).to_string();
+    let subtask = if parts.len() > 1 {
+        Some(parts[1].to_string())
+    } else {
+        None
+    };
+
+    let count = if parts.len() > 2 {
+        if let Some((current_str, total_str)) = parts[2].split_once('/') {
+            if let (Ok(current), Ok(total)) =
+                (current_str.parse::<usize>(), total_str.parse::<usize>())
+            {
+                Some((current, total))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    (main_message, subtask, count)
+}
+
 fn setup_progress_tracking(
     project_name: String,
     on_view_change: Callback<AppView>,
@@ -99,15 +149,18 @@ fn setup_progress_tracking(
     let on_view_change_clone = on_view_change.clone();
 
     let closure = Closure::<dyn FnMut(String)>::new(move |payload: String| {
-        let percentage = get_progress_percentage(&payload);
+        let (main_message, subtask, count) = parse_progress_message(&payload);
+        let percentage = get_progress_percentage(&main_message);
 
         progress_state_clone.set(ProgressState {
-            message: payload.clone(),
+            message: main_message.clone(),
             percentage,
             error: None,
+            subtask,
+            subtask_count: count,
         });
 
-        if payload == "Projet créé avec succès" {
+        if main_message == "Projet créé avec succès" {
             handle_project_success(project_name_clone.clone(), on_view_change_clone.clone());
         }
     });
@@ -122,6 +175,8 @@ fn setup_progress_tracking(
                 error: Some(error),
                 message: progress_state.message.clone(),
                 percentage: progress_state.percentage,
+                subtask: progress_state.subtask.clone(),
+                subtask_count: progress_state.subtask_count,
             });
             Box::new(|| {})
         }

@@ -57,17 +57,31 @@ async fn open_new_project(
     ymax: f64,
 ) -> Result<String, String> {
     let _ = app_handle.emit("progress-update", "Recherche des fichiers");
-
     let urls = get_shp_file_urls(&code).await.map_err(|e| e.to_string())?;
-
     let _ = app_handle.emit("progress-update", "Téléchargement des données");
+    let file_types = ["BDTOPO", "BDFORET", "RPG"];
+    for (i, (url, file_type)) in urls.iter().zip(file_types.iter()).enumerate() {
+        let _ = app_handle.emit(
+            "progress-update",
+            format!(
+                "Téléchargement des données|{}|{}/{}",
+                file_type,
+                i + 1,
+                file_types.len()
+            ),
+        );
 
-    download_shp_files(&urls, &code)
-        .await
-        .map_err(|e| e.to_string())?;
+        if !Path::new(format!("projects/cache/{}_{}.7z", file_type, code).as_str()).exists() {
+            download_shp_file(url, &code).await.map_err(|e| {
+                format!(
+                    "Erreur lors du téléchargement du fichier SHP depuis {}: {:?}",
+                    url, e
+                )
+            })?;
+        }
+    }
 
     let _ = app_handle.emit("progress-update", "Initialisation du projet");
-
     let project_folder = format!("projects/{}", name);
     let project_file_path = format!("{}/{}.tiff", project_folder, name);
 
@@ -86,26 +100,42 @@ async fn open_new_project(
         std::fs::remove_dir_all(&project_folder).unwrap();
     }
 
+    let _ = app_handle.emit(
+        "progress-update",
+        "Initialisation du projet|Création des dossiers|1/2",
+    );
     std::fs::create_dir_all(&project_folder).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{}/resources", project_folder)).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{}/slices", project_folder)).map_err(|e| e.to_string())?;
 
+    let _ = app_handle.emit(
+        "progress-update",
+        "Initialisation du projet|Configuration du projet|2/2",
+    );
     if let Err(e) = create_project(&project_file_path, xmin, ymin, xmax, ymax) {
         return Err(format!("Erreur lors de la création du projet: {:?}", e));
     }
 
     let _ = app_handle.emit("progress-update", "Préparation des Couches");
-
-    prepare_layers(&project_folder, &name, xmin, xmax, ymin, ymax, &code).await?;
+    prepare_layers(
+        &app_handle,
+        &project_folder,
+        &name,
+        xmin,
+        xmax,
+        ymin,
+        ymax,
+        &code,
+    )
+    .await?;
 
     let _ = app_handle.emit("progress-update", "Ajout des Couches");
-
-    if let Err(e) = add_layers(&project_folder, &project_file_path, &name) {
+    if let Err(e) = add_layers(&app_handle, &project_folder, &project_file_path, &name) {
         return Err(format!("Erreur lors de l'ajout des couches: {:?}", e));
     }
 
     let _ = app_handle.emit("progress-update", "Finalisation");
-
+    let _ = app_handle.emit("progress-update", "Finalisation|Export en JPEG|1/2");
     if let Err(e) = export_to_jpg(
         &project_file_path,
         format!("{}/{}_VEGET.jpeg", project_folder, name).as_str(),
@@ -113,6 +143,10 @@ async fn open_new_project(
         return Err(format!("Erreur lors de l'exportation de l'image: {:?}", e));
     }
 
+    let _ = app_handle.emit(
+        "progress-update",
+        "Finalisation|Téléchargement d'orthophoto|2/2",
+    );
     if let Err(e) = download_satellite_jpeg(
         format!("{}/{}_ORTHO.jpeg", project_folder, name).as_str(),
         xmin,
@@ -127,7 +161,6 @@ async fn open_new_project(
     }
 
     let _ = app_handle.emit("progress-update", "Nettoyage");
-
     fs::remove_dir_all("tmp")
         .await
         .map_err(|e| format!("Erreur lors de la suppression du dossier tmp: {:?}", e))?;
@@ -151,6 +184,10 @@ fn get_dpts_list() -> HashMap<String, String> {
 }
 
 #[tauri::command]
+/// Obtient la liste des projets précédents.
+///
+/// # Retourne
+/// - HashMap<String, Vec<String>> : Une hashmap contenant le nom du projet et la liste des fichiers associés.
 fn get_projects() -> HashMap<String, Vec<String>> {
     get_previous_projects().unwrap()
 }
@@ -238,34 +275,6 @@ async fn get_shp_file_urls(code: &str) -> Result<Vec<String>, String> {
     Ok(vec![url1, url2, url3])
 }
 
-/// Télécharge le fichier SHP depuis l'URL donnée.
-/// # Paramètres
-/// - `url`: Une tranche de chaîne qui contient l'URL du fichier SHP.
-/// - `code`: Une tranche de chaîne qui contient le code du département.
-/// # Retourne
-/// - Result<(), String> : Un résultat vide ou un message d'erreur.
-async fn download_shp_files(urls: &[String], code: &str) -> Result<(), String> {
-    println!("Téléchargement des fichiers SHP");
-    if Path::new(format!("projects/cache/BDTOPO_{}.7z", code).as_str()).exists()
-        && Path::new(format!("projects/cache/BDFORET_{}.7z", code).as_str()).exists()
-        && Path::new(format!("projects/cache/RPG_{}.7z", code).as_str()).exists()
-    {
-        return Ok(());
-    }
-
-    for url in urls {
-        download_shp_file(url, code).await.map_err(|e| {
-            format!(
-                "Erreur lors du téléchargement du fichier SHP depuis {}: {:?}",
-                url, e
-            )
-        })?;
-        println!("Fichier SHP téléchargé depuis {}", url);
-    }
-    println!("Téléchargement des fichiers SHP terminé");
-    Ok(())
-}
-
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
 /// # Paramètres
 /// - `project_folder`: Le dossier du projet.
@@ -278,6 +287,7 @@ async fn download_shp_files(urls: &[String], code: &str) -> Result<(), String> {
 /// # Retourne
 /// - Result<(), String> : Un résultat vide ou un message d'erreur.
 async fn prepare_layers(
+    app_handle: &tauri::AppHandle,
     project_folder: &str,
     project_name: &str,
     xmin: f64,
@@ -288,6 +298,10 @@ async fn prepare_layers(
 ) -> Result<(), String> {
     let cache_folder_path = "projects/cache".to_string();
 
+    let _ = app_handle.emit(
+        "progress-update",
+        "Préparation des Couches|Préparation de l'étendue régionale|1/4",
+    );
     let regional_geojson = format!("{}/{}.geojson", cache_folder_path, code);
     if !Path::new(&regional_geojson).exists() {
         let _ = get_regional_extent(code);
@@ -297,7 +311,6 @@ async fn prepare_layers(
     let regional_gpkg = format!("{}/resources/{}.gpkg", project_folder, project_name);
 
     let _ = convert_to_gpkg(&regional_geojson, &temp_regional_gpkg);
-
     let _ = clip_to_extent(&temp_regional_gpkg, &regional_gpkg, xmin, ymin, xmax, ymax);
 
     let mut layers: HashMap<String, Vec<&str>> = HashMap::new();
@@ -322,9 +335,44 @@ async fn prepare_layers(
         ],
     );
 
+    let mut layer_index = 2;
+    let total_archives = layers.len();
+
     for (archive, files) in layers {
+        let layer_type = if archive.contains("BDFORET") {
+            "Végétation"
+        } else if archive.contains("RPG") {
+            "Parcelles agricoles"
+        } else if archive.contains("BDTOPO") {
+            "Topographie"
+        } else {
+            "Inconnu"
+        };
+
+        let _ = app_handle.emit(
+            "progress-update",
+            format!(
+                "Préparation des Couches|Préparation des couches {}|{}/{}",
+                layer_type,
+                layer_index,
+                total_archives + 1
+            ),
+        );
+
         let archive_path = format!("{}/{}", cache_folder_path, archive);
-        for file in files {
+
+        let total_files = files.len();
+        for (file_index, file) in files.iter().enumerate() {
+            let _ = app_handle.emit(
+                "progress-update",
+                format!(
+                    "Préparation des Couches|Extraction de {}|{}/{}",
+                    file,
+                    file_index + 1,
+                    total_files
+                ),
+            );
+
             extract_files_by_name(&archive_path, file, "tmp").map_err(|e| {
                 format!(
                     "Erreur lors de l'extraction du fichier {} depuis l'archive {}: {:?}",
@@ -335,12 +383,34 @@ async fn prepare_layers(
             let temp_file = format!("tmp/{}/{}.shp", file, file);
             let temp_gpkg = format!("tmp/{}.gpkg", file);
             let output_gpkg = format!("{}/resources/{}.gpkg", project_folder, file);
+
+            let _ = app_handle.emit(
+                "progress-update",
+                format!(
+                    "Préparation des Couches|Conversion de {}|{}/{}",
+                    file,
+                    file_index + 1,
+                    total_files
+                ),
+            );
+
             if let Err(e) = convert_to_gpkg(&temp_file, &temp_gpkg) {
                 return Err(format!(
                     "Erreur lors de la conversion du fichier {} en GPKG: {:?}",
                     temp_file, e
                 ));
             }
+
+            let _ = app_handle.emit(
+                "progress-update",
+                format!(
+                    "Préparation des Couches|Découpage de {}|{}/{}",
+                    file,
+                    file_index + 1,
+                    total_files
+                ),
+            );
+
             if let Err(e) = clip_to_extent(&temp_gpkg, &output_gpkg, xmin, ymin, xmax, ymax) {
                 return Err(format!(
                     "Erreur lors du découpage du fichier {}: {:?}",
@@ -348,6 +418,8 @@ async fn prepare_layers(
                 ));
             }
         }
+
+        layer_index += 1;
     }
 
     Ok(())
@@ -361,10 +433,16 @@ async fn prepare_layers(
 /// # Retourne
 /// - Result<(), Box<dyn std::error::Error>> : Un résultat vide ou une erreur.
 fn add_layers(
+    app_handle: &tauri::AppHandle,
     project_folder: &str,
     project_file_path: &str,
     project_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = app_handle.emit(
+        "progress-update",
+        "Ajout des Couches|Ajout de la couche régionale|1/4",
+    );
+
     if let Err(e) = add_regional_layer(
         project_file_path,
         &format!("{}/resources/{}.gpkg", project_folder, project_name),
@@ -395,8 +473,37 @@ fn add_layers(
         ],
     );
 
+    let mut layer_index = 2;
+    let total_layer_types = layers.len() + 1;
+
     for (key, value) in layers {
-        for file in value {
+        let layer_type = match key {
+            1 => "Végétation",
+            2 => "Parcelles agricoles",
+            3 => "Topographie",
+            _ => "Inconnu",
+        };
+
+        let _ = app_handle.emit(
+            "progress-update",
+            format!(
+                "Ajout des Couches|Ajout des couches {}|{}/{}",
+                layer_type, layer_index, total_layer_types
+            ),
+        );
+
+        let total_files = value.len();
+        for (file_index, file) in value.iter().enumerate() {
+            let _ = app_handle.emit(
+                "progress-update",
+                format!(
+                    "Ajout des Couches|Ajout de {}|{}/{}",
+                    file,
+                    file_index + 1,
+                    total_files
+                ),
+            );
+
             let layer_path = format!("{}/resources/{}.gpkg", project_folder, file);
             match key {
                 1 => add_vegetation_layer(project_file_path, &layer_path),
@@ -408,6 +515,8 @@ fn add_layers(
                 }
             }?
         }
+
+        layer_index += 1;
     }
 
     Ok(())
