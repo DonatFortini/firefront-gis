@@ -1,3 +1,4 @@
+use crate::app_setup::Config;
 use std::process::Command;
 use std::str;
 
@@ -30,29 +31,38 @@ fn check_command(command: &str, arg: &str, error: DependencyError) -> Result<(),
 ///
 /// # Retourne
 /// - Result<(), DependencyError>
-pub fn check_dependencies() -> Result<(), DependencyError> {
-    let gdal_command = if cfg!(target_os = "windows") {
-        "gdalinfo.exe"
-    } else {
-        "gdalinfo"
-    };
-    check_command(gdal_command, "--version", DependencyError::GDALNotInstalled)?;
+pub fn check_dependencies(config: &mut Config) -> Result<(), DependencyError> {
+    let (gdal_command, python_command, path_command, seven_zip_command) =
+        if cfg!(target_os = "windows") {
+            ("gdalinfo.exe", "python", "where", "7z.exe")
+        } else {
+            ("gdalinfo", "python3", "which", "7z")
+        };
 
-    let python_command = if cfg!(target_os = "windows") {
-        "python"
-    } else {
-        "python3"
-    };
-    check_command(
-        python_command,
-        "--version",
-        DependencyError::PythonNotInstalled,
-    )?;
-    let seven_zip_command = if cfg!(target_os = "windows") {
-        "7z.exe"
-    } else {
-        "7z"
-    };
+    for (command, arg, error, path_field) in [
+        (
+            gdal_command,
+            "--version",
+            DependencyError::GDALNotInstalled,
+            &mut config.gdal_path,
+        ),
+        (
+            python_command,
+            "--version",
+            DependencyError::PythonNotInstalled,
+            &mut config.python_path,
+        ),
+    ] {
+        check_command(command, arg, error)?;
+        if let Ok(path_output) = Command::new(path_command).arg(command).output() {
+            let path = str::from_utf8(&path_output.stdout)
+                .unwrap_or_default()
+                .trim();
+            *path_field = Some(path.into());
+            println!("{} path set to: {}", command, path);
+        }
+    }
+
     check_command(
         seven_zip_command,
         "--help",

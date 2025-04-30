@@ -762,6 +762,51 @@ select:focus-visible {
     outline-offset: 2px;
 }
 
+.settings-view .button-group {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 28px;
+}
+
+.settings-view .primary-action,
+.settings-view .secondary-action {
+    display: flex;
+}
+
+.settings-view .primary-action {
+    flex: 1;
+}
+
+.settings-view .primary-action .save-btn {
+    flex: 1;
+    background-color: var(--accent-primary);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.settings-view .primary-action .save-btn:hover {
+    background-color: var(--accent-tertiary);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.settings-view .secondary-action .clear-cache-btn {
+    background-color: var(--surface-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    font-weight: 500;
+    font-size: 0.9rem;
+    padding: 10px 16px;
+    transition: all var(--transition-speed) var(--transition-timing);
+}
+
+.settings-view .secondary-action .clear-cache-btn:hover {
+    background-color: var(--warning-color);
+    color: white;
+    border-color: var(--warning-color);
+}
+
 @media (max-width: 1024px) {
     .project-grid {
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

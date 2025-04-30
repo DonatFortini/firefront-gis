@@ -5,7 +5,7 @@ use crate::home::Home;
 use crate::loading::Loading;
 use crate::new_project::NewProject;
 use crate::project::Project;
-use crate::settings::Settings;
+use crate::settings::SettingsComponent as Settings;
 use crate::sidebar::Sidebar;
 use crate::types::AppView;
 

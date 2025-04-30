@@ -264,12 +264,16 @@ pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    match slice_images(project_name, 500) {
+
+    let config = crate::app_setup::CONFIG.lock().unwrap();
+    let output_dir = config.output_location.to_string_lossy();
+
+    match slice_images(project_name, config.slice_factor) {
         Ok(_) => {
             compress_folder(
                 &project_path,
                 &format!("export_{}_{}", project_name, date),
-                OUTPUT_DIR.lock().unwrap().to_str().unwrap(),
+                &output_dir,
             )?;
             Ok(())
         }

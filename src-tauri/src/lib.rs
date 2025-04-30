@@ -1,5 +1,8 @@
 use app_setup::setup_check;
-use commands::{create_project_com, delete_project, export, get_os, get_projects};
+use commands::{
+    clear_cache, create_project_com, delete_project, export, get_os, get_projects, get_settings,
+    save_settings,
+};
 
 pub mod app_setup;
 pub mod commands;
@@ -20,7 +23,10 @@ pub fn run() {
             get_projects,
             get_os,
             export,
-            delete_project
+            delete_project,
+            get_settings,
+            save_settings,
+            clear_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,6 +5,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::fs;
 
 use crate::{
+    app_setup,
     gis_operation::{
         create_project, fusion_datasets,
         layers::{add_layers, download_satellite_jpeg, prepare_layers},
@@ -399,5 +400,71 @@ pub async fn delete_project(project_name: &str) -> Result<String, String> {
             );
             Err(format!("Erreur lors de la suppression du projet: {}", e))
         }
+    }
+}
+
+#[command]
+/// Récupère les paramètres de configuration de l'application.
+///
+/// # Retourne
+/// - `Result<serde_json::Value, String>` : Un objet JSON contenant les paramètres de configuration ou une erreur.
+pub fn get_settings() -> Result<serde_json::Value, String> {
+    let config = app_setup::CONFIG.lock().unwrap();
+    let output_location = config.output_location.to_string_lossy().to_string();
+    let gdal_path = config
+        .gdal_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+    let python_path = config
+        .python_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+
+    Ok(serde_json::json!({
+        "output_location": output_location,
+        "gdal_path": gdal_path,
+        "python_path": python_path,
+    }))
+}
+
+#[command(rename_all = "snake_case")]
+/// Enregistre les paramètres de configuration de l'application.
+///     
+/// # Arguments
+///
+/// * `output_location` - Option<String> : L'emplacement de sortie.
+/// * `gdal_path` - Option<String> : Le chemin vers GDAL.
+/// * `python_path` - Option<String> : Le chemin vers Python.
+///
+/// # Retourne
+///
+/// * `String` : Un message de succès ou d'erreur.
+pub fn save_settings(
+    output_location: Option<String>,
+    gdal_path: Option<String>,
+    python_path: Option<String>,
+) -> String {
+    let mut config = app_setup::CONFIG.lock().unwrap();
+    match config.update_settings(output_location, gdal_path, python_path) {
+        Ok(_) => "Paramètres sauvegardés avec succès".to_string(),
+        Err(e) => {
+            format!("Échec de sauvegarde des paramètres: {}", e)
+        }
+    }
+}
+
+#[command]
+/// Vide le cache des projets.
+///
+/// # Retourne
+///
+/// * `Result<String, String>` : Un message de succès ou d'erreur.
+pub fn clear_cache() -> Result<String, String> {
+    match std::fs::remove_dir_all("projects/cache") {
+        Ok(_) => {
+            create_directory_if_not_exists("projects/cache").map_err(|e| e.to_string())?;
+            Ok("Cache vidé avec succès".to_string())
+        }
+        Err(e) => Err(format!("Échec du vidage du cache: {}", e)),
     }
 }
