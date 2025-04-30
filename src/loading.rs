@@ -103,6 +103,7 @@ fn get_progress_percentage(message: &str) -> u8 {
         "Téléchargement des données" => 25,
         "Initialisation du projet" => 35,
         "Préparation des Couches" => 50,
+        "Fusion des données" => 60,
         "Ajout des Couches" => 70,
         "Finalisation" => 85,
         "Nettoyage" => 95,
@@ -113,7 +114,7 @@ fn get_progress_percentage(message: &str) -> u8 {
 
 fn parse_progress_message(payload: &str) -> (String, Option<String>, Option<(usize, usize)>) {
     let parts: Vec<&str> = payload.split('|').collect();
-    let main_message = parts.get(0).map_or("", |s| *s).to_string();
+    let main_message = parts.first().map_or("", |s| *s).to_string();
     let subtask = if parts.len() > 1 {
         Some(parts[1].to_string())
     } else {
@@ -151,6 +152,8 @@ fn setup_progress_tracking(
     let closure = Closure::<dyn FnMut(String)>::new(move |payload: String| {
         let (main_message, subtask, count) = parse_progress_message(&payload);
         let percentage = get_progress_percentage(&main_message);
+
+        web_sys::console::log_1(&format!("Progress update: {}", payload).into());
 
         progress_state_clone.set(ProgressState {
             message: main_message.clone(),

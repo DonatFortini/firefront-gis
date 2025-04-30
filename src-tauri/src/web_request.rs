@@ -6,6 +6,8 @@ use scraper::{Html, Selector};
 use std::{error::Error, fs, path::Path};
 use tokio::{fs::File, io::AsyncWriteExt};
 
+use crate::utils::get_rpg_for_dep_code;
+
 pub enum DBType {
     FORET,
     TOPO,
@@ -14,12 +16,13 @@ pub enum DBType {
 
 /// Obtient l'URL d'un fichier SHP depuis la base de données IGN.
 /// Cherche l'url le plus récent pour le département spécifié.
-/// # Paramètres
-/// - `code`: Une tranche de chaîne qui contient le code du département.
-/// - `url`: Une tranche de chaîne qui contient l'URL d'une page spécifique de la base de données IGN.
+///
+/// # Arguments
+/// - `code`: Le code du département.
+/// - `url`: L'URL de la base de données.
 ///
 /// # Retourne
-/// - Une tranche de chaîne représentant l'URL de l'archive du fichier SHP correspondant au département.
+/// - Result<String, Box<dyn Error>> - L'URL du fichier SHP.
 pub async fn get_departement_shp_file_url(code: &str, url: &str) -> Result<String, Box<dyn Error>> {
     let body = reqwest::get(url).await?.text().await?;
     let document = Html::parse_document(&body);
@@ -81,12 +84,12 @@ pub async fn get_departement_shp_file_url(code: &str, url: &str) -> Result<Strin
 
 /// Télécharge un fichier depuis une URL donnée et l'enregistre à l'emplacement spécifié.
 ///
-/// # Paramètres
-/// - `url`: Une tranche de chaîne qui contient l'URL à télécharger.
-/// - `path`: Une tranche de chaîne qui contient le chemin où le fichier sera enregistré.
+/// # Arguments
+/// - `url`: L'URL du fichier à télécharger.
+/// - `path`: Le chemin où le fichier sera enregistré.
 ///
 /// # Retourne
-/// - Un résultat vide indiquant le succès ou une erreur.
+/// - Result<(), Box<dyn Error>> - Un résultat vide indiquant le succès ou une erreur.
 pub async fn download_file(url: &str, path: &str) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path).await?;
     let mut stream = reqwest::get(url).await?.bytes_stream();
@@ -105,12 +108,12 @@ pub async fn download_file(url: &str, path: &str) -> Result<(), Box<dyn Error>> 
 /// - Si l'URL contient "RPG", le nom sera "RPG".
 /// - Sinon, le nom sera "inconnu".
 ///
-/// # Paramètres
-/// - `url`: Une tranche de chaîne qui contient l'URL à vérifier.
-/// - `code`: Une tranche de chaîne qui contient le code du département.
-///
+/// # Arguments
+/// - `url`:  l'URL à télécharger.
+/// - `code`: le code du département.
+///     
 /// # Retourne
-/// - Un résultat vide indiquant le succès ou une erreur.
+/// - Result<(), Box<dyn Error>> - Un résultat vide indiquant le succès ou une erreur.
 pub async fn download_shp_file(url: &str, code: &str) -> Result<(), Box<dyn Error>> {
     let name = match url {
         url if url.contains("BDTOPO") => "BDTOPO",
@@ -126,4 +129,33 @@ pub async fn download_shp_file(url: &str, code: &str) -> Result<(), Box<dyn Erro
     }
 
     download_file(url, &archive_path).await
+}
+
+/// Obtients les URLs des fichiers SHP pour les départements spécifiés.
+///
+/// # Arguments
+/// - `codes`: Une liste de chaînes contenant les codes des départements.
+///
+/// # Retourne
+/// - Result<Vec<String>, Box<dyn Error>> - Une liste de chaînes contenant les URLs des fichiers SHP.
+pub async fn get_shp_file_urls(codes: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
+    let url_dl_topo = "https://geoservices.ign.fr/bdtopo#";
+    let url_dl_foret = "https://geoservices.ign.fr/bdforet#";
+    let url_dl_rpg = "https://geoservices.ign.fr/rpg#";
+
+    let mut urls = Vec::new();
+
+    for code in codes {
+        let url_topo = get_departement_shp_file_url(code, url_dl_topo).await?;
+        urls.push(url_topo);
+
+        let url_foret = get_departement_shp_file_url(code, url_dl_foret).await?;
+        urls.push(url_foret);
+
+        let rpg_code = get_rpg_for_dep_code(code).unwrap();
+        let url_rpg = get_departement_shp_file_url(rpg_code, url_dl_rpg).await?;
+        urls.push(url_rpg);
+    }
+
+    Ok(urls)
 }

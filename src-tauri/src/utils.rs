@@ -1,120 +1,65 @@
+use gdal::vector::Geometry;
 use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs;
+use std::fs::{self};
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use xdg_user;
 
-use crate::slicing::slice_images;
+use crate::gis_operation::slicing::slice_images;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
+pub struct BoundingBox {
+    pub xmin: f64,
+    pub ymin: f64,
+    pub xmax: f64,
+    pub ymax: f64,
+}
+
+impl BoundingBox {
+    pub fn new(xmin: f64, ymin: f64, xmax: f64, ymax: f64) -> Self {
+        BoundingBox {
+            xmin,
+            ymin,
+            xmax,
+            ymax,
+        }
+    }
+
+    pub fn width(&self) -> f64 {
+        self.xmax - self.xmin
+    }
+
+    pub fn height(&self) -> f64 {
+        self.ymax - self.ymin
+    }
+
+    pub fn to_wkt(&self) -> String {
+        format!(
+            "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
+            self.xmin,
+            self.ymin,
+            self.xmax,
+            self.ymin,
+            self.xmax,
+            self.ymax,
+            self.xmin,
+            self.ymax,
+            self.xmin,
+            self.ymin
+        )
+    }
+
+    pub fn to_geometry(&self) -> Result<Geometry, gdal::errors::GdalError> {
+        Geometry::from_wkt(&self.to_wkt())
+    }
+}
 
 lazy_static! {
-    pub static ref DEPARTEMENTS: HashMap<String, String> = [
-        ("01", "Ain"),
-        ("02", "Aisne"),
-        ("03", "Allier"),
-        ("04", "Alpes-de-Haute-Provence"),
-        ("05", "Hautes-Alpes"),
-        ("06", "Alpes-Maritimes"),
-        ("07", "Ardèche"),
-        ("08", "Ardennes"),
-        ("09", "Ariège"),
-        ("10", "Aube"),
-        ("11", "Aude"),
-        ("12", "Aveyron"),
-        ("13", "Bouches-du-Rhône"),
-        ("14", "Calvados"),
-        ("15", "Cantal"),
-        ("16", "Charente"),
-        ("17", "Charente-Maritime"),
-        ("18", "Cher"),
-        ("19", "Corrèze"),
-        ("2A", "Corse-du-Sud"),
-        ("2B", "Haute-Corse"),
-        ("21", "Côte-d'Or"),
-        ("22", "Côtes-d'Armor"),
-        ("23", "Creuse"),
-        ("24", "Dordogne"),
-        ("25", "Doubs"),
-        ("26", "Drôme"),
-        ("27", "Eure"),
-        ("28", "Eure-et-Loir"),
-        ("29", "Finistère"),
-        ("30", "Gard"),
-        ("31", "Haute-Garonne"),
-        ("32", "Gers"),
-        ("33", "Gironde"),
-        ("34", "Hérault"),
-        ("35", "Ille-et-Vilaine"),
-        ("36", "Indre"),
-        ("37", "Indre-et-Loire"),
-        ("38", "Isère"),
-        ("39", "Jura"),
-        ("40", "Landes"),
-        ("41", "Loir-et-Cher"),
-        ("42", "Loire"),
-        ("43", "Haute-Loire"),
-        ("44", "Loire-Atlantique"),
-        ("45", "Loiret"),
-        ("46", "Lot"),
-        ("47", "Lot-et-Garonne"),
-        ("48", "Lozère"),
-        ("49", "Maine-et-Loire"),
-        ("50", "Manche"),
-        ("51", "Marne"),
-        ("52", "Haute-Marne"),
-        ("53", "Mayenne"),
-        ("54", "Meurthe-et-Moselle"),
-        ("55", "Meuse"),
-        ("56", "Morbihan"),
-        ("57", "Moselle"),
-        ("58", "Nièvre"),
-        ("59", "Nord"),
-        ("60", "Oise"),
-        ("61", "Orne"),
-        ("62", "Pas-de-Calais"),
-        ("63", "Puy-de-Dôme"),
-        ("64", "Pyrénées-Atlantiques"),
-        ("65", "Hautes-Pyrénées"),
-        ("66", "Pyrénées-Orientales"),
-        ("67", "Bas-Rhin"),
-        ("68", "Haut-Rhin"),
-        ("69", "Rhône"),
-        ("70", "Haute-Saône"),
-        ("71", "Saône-et-Loire"),
-        ("72", "Sarthe"),
-        ("73", "Savoie"),
-        ("74", "Haute-Savoie"),
-        ("75", "Paris"),
-        ("76", "Seine-Maritime"),
-        ("77", "Seine-et-Marne"),
-        ("78", "Yvelines"),
-        ("79", "Deux-Sèvres"),
-        ("80", "Somme"),
-        ("81", "Tarn"),
-        ("82", "Tarn-et-Garonne"),
-        ("83", "Var"),
-        ("84", "Vaucluse"),
-        ("85", "Vendée"),
-        ("86", "Vienne"),
-        ("87", "Haute-Vienne"),
-        ("88", "Vosges"),
-        ("89", "Yonne"),
-        ("90", "Territoire de Belfort"),
-        ("91", "Essonne"),
-        ("92", "Hauts-de-Seine"),
-        ("93", "Seine-Saint-Denis"),
-        ("94", "Val-de-Marne"),
-        ("95", "Val-d'Oise"),
-        ("971", "Guadeloupe"),
-        ("972", "Martinique"),
-        ("973", "Guyane"),
-        ("974", "La Réunion"),
-        ("976", "Mayotte"),
-    ]
-    .iter()
-    .map(|&(code, name)| (code.to_string(), name.to_string()))
-    .collect();
     pub static ref RPG_DEP: HashMap<&'static str, Vec<&'static str>> = HashMap::from([
         (
             "84",
@@ -168,26 +113,6 @@ lazy_static! {
             .to_path_buf();
         std::sync::Mutex::new(output_dir)
     };
-}
-
-pub fn get_departement_list() -> HashMap<String, String> {
-    DEPARTEMENTS.clone()
-}
-
-pub fn get_departement_name(code: &str) -> Option<String> {
-    DEPARTEMENTS.get(code).cloned()
-}
-
-pub fn get_departement_code(name: &str) -> Option<String> {
-    DEPARTEMENTS.iter().find_map(
-        |(code, n)| {
-            if n == name { Some(code.clone()) } else { None }
-        },
-    )
-}
-
-pub fn get_departements_names() -> Vec<String> {
-    DEPARTEMENTS.values().cloned().collect()
 }
 
 pub fn get_rpg_for_dep_code(code: &str) -> Option<&str> {
@@ -323,6 +248,16 @@ pub fn get_operating_system() -> &'static str {
     std::env::consts::OS
 }
 
+/// Exporte un projet ainsi que l'ensemble de ses ressources
+/// (images, fichiers de configuration, etc.) dans un format compressé.
+///
+/// # Arguments
+///
+/// * `project_name` - Le nom du projet à exporter.
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn Error>>` - Un résultat indiquant si l'exportation a réussi ou échoué.
 pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
     let project_path = format!("projects/{}", project_name);
     let date = std::time::SystemTime::now()
@@ -340,4 +275,109 @@ pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
         }
         Err(_) => Err(format!("Echec découpage: {}", project_name).into()),
     }
+}
+
+/// Exporte un projet en format JPEG
+/// Cette fonction est utilisée pour créer une image JPEG à partir d'un projet GDAL.
+/// Utilise ImageMagick pour exporter un projet en JPEG. (Compatibilité avec le simulateur)
+///
+/// # Arguments
+///
+/// * `project_file_path` - chemin du fichier projet à exporter
+/// * `output_jpg_path` - chemin du fichier JPEG de sortie
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'exportation a réussi ou échoué
+pub fn export_to_jpg(
+    project_file_path: &str,
+    output_jpg_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let magick_status = Command::new("magick")
+        .args([project_file_path, output_jpg_path])
+        .status()?;
+
+    if !magick_status.success() {
+        return Err("Failed to export to JPEG using ImageMagick".into());
+    }
+
+    Ok(())
+}
+
+pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, String> {
+    let project_path = format!("projects/{}/", project_name);
+    let output = Command::new("gdalinfo")
+        .args([
+            format!("{}{}.tiff", project_path, project_name),
+            "-json".to_owned(),
+        ])
+        .output();
+
+    let json_output: Value = serde_json::from_slice(&output.unwrap().stdout)
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    let corner_coordinates = json_output["cornerCoordinates"].as_object().unwrap();
+
+    Ok(BoundingBox {
+        xmin: corner_coordinates["lowerLeft"][0].as_f64().unwrap(),
+        ymin: corner_coordinates["lowerLeft"][1].as_f64().unwrap(),
+        xmax: corner_coordinates["upperRight"][0].as_f64().unwrap(),
+        ymax: corner_coordinates["upperRight"][1].as_f64().unwrap(),
+    })
+}
+
+pub fn get_geojson_bounding_box(
+    file_path: &str,
+) -> Result<BoundingBox, Box<dyn std::error::Error>> {
+    let output = Command::new("ogrinfo")
+        .args(["-so", "-al", file_path])
+        .output()?;
+    let info_str = String::from_utf8(output.stdout)?;
+
+    let extent_pattern = r"Extent:\s*\(([\d.-]+),\s*([\d.-]+)\)\s*-\s*\(([\d.-]+),\s*([\d.-]+)\)";
+    let caps = regex::Regex::new(extent_pattern)?
+        .captures(&info_str)
+        .ok_or("Could not find extent in ogrinfo output")?;
+
+    Ok(BoundingBox {
+        xmin: caps[1].parse()?,
+        ymin: caps[2].parse()?,
+        xmax: caps[3].parse()?,
+        ymax: caps[4].parse()?,
+    })
+}
+
+/// Nettoie le dossier tmp en conservant uniquement les fichiers GPKG
+/// Cette fonction est utilisée pour nettoyer les fichiers entre les traitements
+/// de différentes régions dans le processus de création de projet
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error>>` - Un résultat indiquant le succès ou l'échec
+pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = std::path::Path::new("tmp");
+
+    if !tmp_dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(tmp_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+            continue;
+        }
+
+        if let Some(extension) = path.extension() {
+            if extension != "gpkg" {
+                std::fs::remove_file(&path)?;
+            }
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+
+    Ok(())
 }

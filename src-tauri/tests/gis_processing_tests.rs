@@ -1,12 +1,13 @@
 mod common;
 
 use common::*;
-use firefront_gis_lib::gis_processing::{
-    clip_to_bb, convert_to_gpkg, create_project, download_satellite_jpeg, fusion_datasets,
-    get_regional_extent,
-};
-use firefront_gis_lib::utils::{
-    create_directory_if_not_exists, export_to_jpg, extract_files_by_name,
+
+use firefront_gis_lib::{
+    gis_operation::{
+        clip_to_bb, convert_to_gpkg, create_project, fusion_datasets,
+        layers::download_satellite_jpeg, regions::create_region_geojson,
+    },
+    utils::{create_directory_if_not_exists, export_to_jpg, extract_files_by_name},
 };
 use gdal::Dataset;
 use std::fs;
@@ -82,8 +83,17 @@ fn test_clip_shapefile() {
 #[test]
 fn test_get_regional_extent() {
     create_directory_if_not_exists("tmp").unwrap();
-    let res = get_regional_extent("2A");
+    let res = create_region_geojson("2A", "tmp/2A.geojson");
     assert_result_ok(&res, "Getting regional extent failed");
+}
+
+#[test]
+fn test_get_regional_gpkg() {
+    create_directory_if_not_exists("tmp").unwrap();
+    create_region_geojson("2A", "tmp/2A.geojson").unwrap();
+    let output_gpkg = "tmp/2A.gpkg";
+    let result = convert_to_gpkg("tmp/2A.geojson", output_gpkg);
+    assert_result_ok(&result, "Creating regional GeoPackage failed");
 }
 
 #[test]
@@ -148,11 +158,11 @@ fn test_fusion() {
     extract_files_by_name(veget_path_2b, "FORMATION_VEGETALE", "tmp").unwrap();
     fs::rename("tmp/FORMATION_VEGETALE", "tmp/FORMATION_VEGETALE_2B").unwrap();
 
-    let dataset = vec![
-        "tmp/FORMATION_VEGETALE_2A/FORMATION_VEGETALE.shp",
-        "tmp/FORMATION_VEGETALE_2B/FORMATION_VEGETALE.shp",
+    let dataset = [
+        "tmp/FORMATION_VEGETALE_2A/FORMATION_VEGETALE.shp".to_string(),
+        "tmp/FORMATION_VEGETALE_2B/FORMATION_VEGETALE.shp".to_string(),
     ];
 
-    let res = fusion_datasets(&dataset);
+    let res = fusion_datasets(&dataset, "tmp/FORMATION_VEGETALE_FUSION.gpkg");
     assert_result_ok(&res, "Fusion of datasets failed");
 }

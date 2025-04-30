@@ -65,19 +65,16 @@ pub fn home(props: &HomeProps) -> Html {
                 }))
                 .unwrap();
 
-                match invoke("delete_project", args).await {
-                    response => {
-                        if let Ok(result) = serde_wasm_bindgen::from_value::<String>(response) {
-                            if result == "success" {
-                                load_projects(projects.clone());
-                            } else {
-                                web_sys::console::error_1(
-                                    &format!("Erreur lors de la suppression: {}", result).into(),
-                                );
-                            }
-                        }
+                let response = invoke("delete_project", args).await;
+                if let Ok(result) = serde_wasm_bindgen::from_value::<String>(response) {
+                    if result == "success" {
+                        load_projects(projects.clone());
+                    } else {
+                        web_sys::console::error_1(
+                            &format!("Erreur lors de la suppression: {}", result).into(),
+                        );
                     }
-                }
+                };
 
                 delete_in_progress.set(false);
             });

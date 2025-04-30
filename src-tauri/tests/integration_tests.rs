@@ -1,10 +1,12 @@
 mod common;
 
 use common::*;
-use firefront_gis_lib::gis_processing::{
-    add_regional_layer, add_rpg_layer, add_topo_layer, add_vegetation_layer, clip_to_bb,
-    convert_to_gpkg, create_project, get_regional_extent,
+
+use firefront_gis_lib::gis_operation::layers::{
+    add_regional_layer, add_rpg_layer, add_topo_layer, add_vegetation_layer,
 };
+use firefront_gis_lib::gis_operation::regions::create_region_geojson;
+use firefront_gis_lib::gis_operation::{clip_to_bb, convert_to_gpkg, create_project};
 use firefront_gis_lib::utils::{create_directory_if_not_exists, extract_files_by_name};
 use gdal::Dataset;
 use std::fs;
@@ -59,7 +61,7 @@ fn test_end_to_end_workflow() {
             &format!("{} shapefile was not created", subfolder),
         );
     }
-    let result = get_regional_extent("2A");
+    let result = create_region_geojson("2A", "tmp/2A.geojson");
     assert_result_ok(&result, "Getting regional extent failed");
     let result = create_project(project_file_path, &project_bb);
     assert_result_ok(&result, "Project creation failed");
@@ -164,7 +166,6 @@ fn test_end_to_end_workflow() {
         pixel_size_y
     );
 
-    // Clean up the test resources (excluding 7z archives)
     let test_dir = Path::new("tests/res");
     for entry in fs::read_dir(test_dir).unwrap() {
         let entry = entry.unwrap();

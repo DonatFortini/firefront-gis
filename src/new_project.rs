@@ -1,9 +1,6 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::HtmlSelectElement;
 use yew::prelude::*;
 
 use crate::types::AppView;
@@ -17,14 +14,18 @@ extern "C" {
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
+pub struct ProjectBoundingBox {
+    pub xmin: f64,
+    pub ymin: f64,
+    pub xmax: f64,
+    pub ymax: f64,
+}
+
 #[derive(Serialize, Deserialize)]
 struct NewProjectArgs {
-    code: String,
     name: String,
-    xmin: f64,
-    ymin: f64,
-    xmax: f64,
-    ymax: f64,
+    project_bb: ProjectBoundingBox,
 }
 
 #[derive(Properties, PartialEq)]
@@ -34,10 +35,8 @@ pub struct NewProjectProps {
 
 #[function_component(NewProject)]
 pub fn new_project(props: &NewProjectProps) -> Html {
-    let departments = use_state(HashMap::<String, String>::new);
     let is_loading = use_state(|| false);
     let project_name = use_state(String::new);
-    let selected_department = use_state(String::new);
 
     let xmin_str = use_state(String::new);
     let ymin_str = use_state(String::new);
@@ -45,19 +44,6 @@ pub fn new_project(props: &NewProjectProps) -> Html {
     let ymax_str = use_state(String::new);
 
     let validation_errors = use_state(Vec::<String>::new);
-
-    {
-        let departments = departments.clone();
-        use_effect_with((), move |_| {
-            spawn_local(async move {
-                let result = invoke_without_args("get_dpts_list").await;
-                if let Ok(depts) = serde_wasm_bindgen::from_value(result) {
-                    departments.set(depts);
-                }
-            });
-            || ()
-        });
-    }
 
     fn parse_coordinate(s: &str) -> Option<f64> {
         if s.trim().is_empty() {
@@ -125,14 +111,6 @@ pub fn new_project(props: &NewProjectProps) -> Html {
         })
     };
 
-    let on_department_change = {
-        let selected_department = selected_department.clone();
-        Callback::from(move |e: Event| {
-            let select: HtmlSelectElement = e.target_unchecked_into();
-            selected_department.set(select.value());
-        })
-    };
-
     let on_project_name_change = {
         let project_name = project_name.clone();
         Callback::from(move |e: InputEvent| {
@@ -151,7 +129,6 @@ pub fn new_project(props: &NewProjectProps) -> Html {
         let validation_errors = validation_errors.clone();
         let on_view_change = props.on_view_change.clone();
         let project_name = project_name.clone();
-        let selected_department = selected_department.clone();
         let xmin_str = xmin_str.clone();
         let ymin_str = ymin_str.clone();
         let xmax_str = xmax_str.clone();
@@ -161,10 +138,6 @@ pub fn new_project(props: &NewProjectProps) -> Html {
             e.prevent_default();
 
             let mut errors = Vec::new();
-
-            if (*selected_department).is_empty() {
-                errors.push("Veuillez sélectionner un département".to_string());
-            }
 
             if (*project_name).is_empty() {
                 errors.push("Le nom du projet est requis".to_string());
@@ -215,12 +188,13 @@ pub fn new_project(props: &NewProjectProps) -> Html {
             is_loading.set(true);
 
             let args = NewProjectArgs {
-                code: (*selected_department).clone(),
                 name: (*project_name).clone(),
-                xmin: xmin.unwrap(),
-                ymin: ymin.unwrap(),
-                xmax: xmax.unwrap(),
-                ymax: ymax.unwrap(),
+                project_bb: ProjectBoundingBox {
+                    xmin: xmin.unwrap(),
+                    ymin: ymin.unwrap(),
+                    xmax: xmax.unwrap(),
+                    ymax: ymax.unwrap(),
+                },
             };
 
             let project_name_clone = (*project_name).clone();
@@ -232,7 +206,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
 
             spawn_local(async move {
                 let serialized_args = serde_wasm_bindgen::to_value(&args).unwrap();
-                let result = invoke("open_new_project", serialized_args).await;
+                let result = invoke("create_project_com", serialized_args).await;
 
                 if let Err(e) = serde_wasm_bindgen::from_value::<()>(result) {
                     web_sys::console::log_1(&format!("Error: {:?}", e).into());
@@ -243,15 +217,6 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                 }
             });
         })
-    };
-
-    let sorted_departments = {
-        let mut dept_list: Vec<(String, String)> = departments
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        dept_list.sort_by(|(a_key, _), (b_key, _)| a_key.cmp(b_key));
-        dept_list
     };
 
     html! {
@@ -269,22 +234,6 @@ pub fn new_project(props: &NewProjectProps) -> Html {
             }
 
             <form onsubmit={on_submit}>
-                <div class="form-group">
-                    <label for="department">{"Département"}<span class="required">{"*"}</span></label>
-                    <select
-                        id="department"
-                        value={(*selected_department).clone()}
-                        onchange={on_department_change}
-                    >
-                        <option value="">{"-- Sélectionnez un département --"}</option>
-                        {
-                            for sorted_departments.iter().map(|(code, name)| html! {
-                            <option value={code.clone()}>{format!("{} - {}", code, name)}</option>
-                            })
-                        }
-                    </select>
-                </div>
-
                 <div class="form-group">
                     <label for="project-name">{"Nom du projet"}<span class="required">{"*"}</span></label>
                     <input
@@ -371,6 +320,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                     </div>
                     <div class="coordinate-note">
                         <p>{"Note : Les dimensions de la zone (largeur et hauteur) doivent être des multiples de 500"}</p>
+                        <p>{"Le système déterminera automatiquement les régions qui intersectent cette zone."}</p>
                     </div>
                 </div>
 
