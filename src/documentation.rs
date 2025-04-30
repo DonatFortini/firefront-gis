@@ -5,10 +5,7 @@ pub fn documentation() -> Html {
     html! {
         <div class="documentation-view">
             <h2>{"Documentation"}</h2>
-            <div class="doc-section">
-                <h3>{"Pour commencer"}</h3>
-                <p>{"Firefront GIS vous permet de créer et de gérer des projets d'information géographique pour les départements français. Commencez par créer un nouveau projet et sélectionner un département."}</p>
-            </div>
+
             <div class="doc-section">
                 <h3>{"Dépendances"}</h3>
                 <p>{"Firefront nécessite l'installation de GDAL, Python et 7zip sur votre système."}</p>
@@ -20,7 +17,7 @@ pub fn documentation() -> Html {
             </div>
             <div class="doc-section">
                 <h3>{"Création de projets"}</h3>
-                <p>{"Pour créer un nouveau projet, cliquez sur le bouton 'Créer un nouveau projet', sélectionnez un département, entrez un nom de projet et spécifiez les coordonnées si nécessaire."}</p>
+                <p>{"Pour créer un nouveau projet, cliquez sur le bouton 'Créer un nouveau projet', entrez un nom de projet et spécifiez les coordonnées."}</p>
                 <p>{"L'application téléchargera les données nécessaires depuis l'IGN (Institut national de l'information géographique et forestière) et créera le projet pour vous."}</p>
             </div>
             <div class="doc-section">
@@ -35,7 +32,7 @@ pub fn documentation() -> Html {
             </div>
             <div class="doc-section">
                 <h3>{"Exportation"}</h3>
-                <p>{"Les projets peuvent être exportés en images JPEG pour une utilisation dans des rapports ou des présentations. Les données cartographiques et les images satellites sont disponibles."}</p>
+                <p>{"En vous rendant sur la page d'un projet vous pouvez exporter vos données. L'exportation produit un fichier ZIP contenant toutes les données du projet (découpage des carte de végetation et orthographique,fichier de ressources gpkg, photos originales). Pour modifier l'emplacement de sortie des exportations rendez-vous sur la page des paramètres."}</p>
             </div>
         </div>
     }

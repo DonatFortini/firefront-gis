@@ -12,8 +12,6 @@ use super::{clip_to_bb, convert_to_gpkg};
 
 use crate::utils::{BoundingBox, create_directory_if_not_exists, extract_files_by_name};
 
-//TODO: refaire la doc
-
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
 /// Retourne les chemins vers les fichiers GPKG pour chaque type de couche
 ///
