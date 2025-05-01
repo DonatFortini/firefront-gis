@@ -10,7 +10,10 @@ use super::processing::{apply_overlay, rasterize_layer};
 use super::regions::create_region_geojson;
 use super::{clip_to_bb, convert_to_gpkg};
 
-use crate::utils::{BoundingBox, create_directory_if_not_exists, extract_files_by_name};
+use crate::utils::{
+    BoundingBox, cache_dir, create_directory_if_not_exists, extract_files_by_name, resolution,
+    temp_dir,
+};
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
 /// Retourne les chemins vers les fichiers GPKG pour chaque type de couche
@@ -29,19 +32,21 @@ pub async fn prepare_layers(
     project_bb: &BoundingBox,
     code: &str,
 ) -> Result<(String, String, String, HashMap<String, Vec<String>>), String> {
-    let cache_folder_path = "projects/cache".to_string();
+    let cache_folder_path = cache_dir().to_string_lossy().to_string();
+    let temp_dir = temp_dir().to_string_lossy().to_string();
 
     let _ = app_handle.emit(
         "progress-update",
         "Préparation des Couches|Préparation de l'étendue régionale|1/4",
     );
 
-    create_region_geojson(code, &format!("tmp/{}.geojson", code)).unwrap();
-    let regional_geojson = format!("tmp/{}.geojson", code);
-    let temp_regional_gpkg = format!("tmp/{}.gpkg", code);
-    let regional_gpkg = format!("tmp/{}_region.gpkg", code);
+    let regional_geojson_path = format!("{}/{}.geojson", temp_dir, code);
+    create_region_geojson(code, &regional_geojson_path).unwrap();
 
-    let _ = convert_to_gpkg(&regional_geojson, &temp_regional_gpkg);
+    let temp_regional_gpkg = format!("{}/{}.gpkg", temp_dir, code);
+    let regional_gpkg = format!("{}/{}_region.gpkg", temp_dir, code);
+
+    let _ = convert_to_gpkg(&regional_geojson_path, &temp_regional_gpkg);
     let _ = clip_to_bb(&temp_regional_gpkg, &regional_gpkg, project_bb);
 
     let mut layers: HashMap<String, Vec<&str>> = HashMap::new();
@@ -108,16 +113,16 @@ pub async fn prepare_layers(
                 ),
             );
 
-            extract_files_by_name(&archive_path, file, "tmp").map_err(|e| {
+            extract_files_by_name(&archive_path, file, &temp_dir).map_err(|e| {
                 format!(
                     "Erreur lors de l'extraction du fichier {} depuis l'archive {}: {:?}",
                     file, archive, e
                 )
             })?;
 
-            let temp_file = format!("tmp/{}/{}.shp", file, file);
-            let temp_gpkg = format!("tmp/{}.gpkg", file);
-            let output_gpkg = format!("tmp/{}_{}.gpkg", code, file);
+            let temp_file = format!("{}/{}/{}.shp", temp_dir, file, file);
+            let temp_gpkg = format!("{}/{}.gpkg", temp_dir, file);
+            let output_gpkg = format!("{}/{}_{}.gpkg", temp_dir, code, file);
 
             let _ = app_handle.emit(
                 "progress-update",
@@ -723,10 +728,13 @@ pub fn download_satellite_jpeg(
     output_jpg_path: &str,
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    create_directory_if_not_exists("tmp")?;
-    create_directory_if_not_exists("tmp/wms_cache")?;
+    let temp_dir = temp_dir().to_string_lossy().to_string();
+    create_directory_if_not_exists(&temp_dir)?;
 
-    let resolution = 10.0;
+    let wms_cache_dir = format!("{}/wms_cache", temp_dir);
+    create_directory_if_not_exists(&wms_cache_dir)?;
+
+    let resolution = resolution();
     let width = ((project_bb.xmax - project_bb.xmin) / resolution).ceil() as usize;
     let height = ((project_bb.ymax - project_bb.ymin) / resolution).ceil() as usize;
 
@@ -735,8 +743,8 @@ pub fn download_satellite_jpeg(
         width, height
     );
 
-    let temp_satellite = "tmp/satellite_temp.tif";
-    let wms_file = "tmp/wms_config.xml";
+    let temp_satellite = format!("{}/satellite_temp.tif", temp_dir);
+    let wms_file = format!("{}/wms_config.xml", temp_dir);
     let wms_xml = format!(
         r#"<GDAL_WMS>
       <Service name="WMS">
@@ -764,7 +772,7 @@ pub fn download_satellite_jpeg(
       <Timeout>120</Timeout>
       <Cache>
         <Type>Disk</Type>
-        <Path>tmp/wms_cache</Path>
+        <Path>{}/wms_cache</Path>
         <MaxSize>500000000</MaxSize>
       </Cache>
       <UserAgent>GDAL WMS driver (https://gdal.org/drivers/raster/wms.html)</UserAgent>
@@ -774,10 +782,10 @@ pub fn download_satellite_jpeg(
         <Delay>1</Delay>
       </Retry>
     </GDAL_WMS>"#,
-        project_bb.xmin, project_bb.ymax, project_bb.xmax, project_bb.ymin, width, height
+        project_bb.xmin, project_bb.ymax, project_bb.xmax, project_bb.ymin, width, height, temp_dir
     );
 
-    std::fs::write(wms_file, wms_xml)?;
+    std::fs::write(wms_file.clone(), wms_xml)?;
 
     let mut success = false;
     let mut attempts = 0;
@@ -799,8 +807,8 @@ pub fn download_satellite_jpeg(
                 "PHOTOMETRIC=RGB",
                 "-co",
                 "BIGTIFF=YES",
-                wms_file,
-                temp_satellite,
+                &wms_file,
+                &temp_satellite,
             ])
             .status()?;
 
@@ -818,23 +826,23 @@ pub fn download_satellite_jpeg(
         );
     }
 
-    let metadata = fs::metadata(temp_satellite)?;
+    let metadata = fs::metadata(&temp_satellite)?;
     if metadata.len() == 0 {
         return Err("Le fichier téléchargé est vide".into());
     }
 
-    let temp_jpg = "tmp/satellite_temp.jpg";
+    let temp_jpg = format!("{}/satellite_temp.jpg", temp_dir);
 
     let magick_status = Command::new("magick")
         .args([
-            temp_satellite,
+            &temp_satellite,
             "-resize",
             &format!("{}x{}", width, height),
             "-colorspace",
             "sRGB",
             "-type",
             "TrueColor",
-            temp_jpg,
+            &temp_jpg,
         ])
         .status()?;
 
@@ -842,7 +850,7 @@ pub fn download_satellite_jpeg(
         return Err("Échec de la conversion en JPEG avec ImageMagick".into());
     }
 
-    if Path::new(temp_jpg).exists() {
+    if Path::new(&temp_jpg).exists() {
         std::fs::rename(temp_jpg, output_jpg_path)?;
     } else {
         return Err("Le fichier JPEG temporaire n'a pas été créé".into());

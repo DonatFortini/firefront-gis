@@ -1,11 +1,13 @@
-use crate::utils::{create_directory_if_not_exists, get_project_bounding_box};
+use crate::utils::{create_directory_if_not_exists, get_project_bounding_box, projects_dir};
 use image::{DynamicImage, GenericImageView};
 use std::fs;
 use std::process::Command;
 
 pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String> {
-    let project_path = format!("projects/{}/", project_name);
-    let slice_path = format!("projects/{}/slices/", project_name);
+    let projects_dir_path = projects_dir();
+    let project_folder = projects_dir_path.to_str().unwrap();
+    let project_path = format!("{}/{}/", project_folder, project_name);
+    let slice_path = format!("{}/{}/slices/", project_folder, project_name);
 
     prepare_directories(&slice_path)?;
 

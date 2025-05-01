@@ -6,7 +6,7 @@ use scraper::{Html, Selector};
 use std::{error::Error, fs, path::Path};
 use tokio::{fs::File, io::AsyncWriteExt};
 
-use crate::utils::get_rpg_for_dep_code;
+use crate::utils::{cache_dir, get_rpg_for_dep_code};
 
 pub enum DBType {
     FORET,
@@ -121,7 +121,8 @@ pub async fn download_shp_file(url: &str, code: &str) -> Result<(), Box<dyn Erro
         url if url.contains("RPG") => "RPG",
         _ => "unknown",
     };
-    let cache_folder_path = "projects/cache";
+    let cache_dir_path = cache_dir();
+    let cache_folder_path = cache_dir_path.to_str().unwrap_or_default();
     let archive_path = format!("{}/{}_{}.7z", cache_folder_path, name, code);
 
     if Path::new(&archive_path).exists() {

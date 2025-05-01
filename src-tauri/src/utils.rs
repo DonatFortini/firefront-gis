@@ -1,3 +1,4 @@
+use crate::app_setup::{CONFIG, Config};
 use gdal::vector::Geometry;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -5,9 +6,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self};
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::MutexGuard;
 use xdg_user;
 
 use crate::gis_operation::slicing::slice_images;
@@ -224,20 +225,25 @@ fn find_files_by_basename(
 pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn Error>> {
     #[cfg(target_os = "windows")]
     let output = Command::new("cmd")
-        .args(&["/C", "dir", "projects\\", "/b", "/a:d"])
+        .args(&["/C", "dir", &projects_dir().to_string_lossy(), "/b", "/a:d"])
         .output()?;
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new("ls").args(["projects/"]).output()?;
+    let output = Command::new("ls")
+        .args([projects_dir().to_string_lossy().as_ref()])
+        .output()?;
     let output_str = String::from_utf8_lossy(&output.stdout);
     let mut projects = HashMap::new();
     for line in output_str.lines() {
         let project_name = line.trim();
         if project_name != "cache" {
-            let project_path = format!("projects/{}", project_name);
-            let preview_image_path = format!("{}/{}_ORTHO.jpeg", project_path, project_name);
+            let project_path = project_dir(project_name);
+            let preview_image_path = project_path.join(format!("{}_ORTHO.jpeg", project_name));
             projects.insert(
                 project_name.to_string(),
-                vec![preview_image_path, project_path],
+                vec![
+                    preview_image_path.to_string_lossy().to_string(),
+                    project_path.to_string_lossy().to_string(),
+                ],
             );
         }
     }
@@ -259,16 +265,16 @@ pub fn get_operating_system() -> &'static str {
 ///
 /// * `Result<(), Box<dyn Error>>` - Un résultat indiquant si l'exportation a réussi ou échoué.
 pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
-    let project_path = format!("projects/{}", project_name);
+    let project_path = format!("{}/{}", projects_dir().to_string_lossy(), project_name);
+    let slice_factor_value = slice_factor();
+    let output_dir = output_location().to_string_lossy().to_string();
+
     let date = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    let config = crate::app_setup::CONFIG.lock().unwrap();
-    let output_dir = config.output_location.to_string_lossy();
-
-    match slice_images(project_name, config.slice_factor) {
+    match slice_images(project_name, slice_factor_value) {
         Ok(_) => {
             compress_folder(
                 &project_path,
@@ -277,7 +283,7 @@ pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
             )?;
             Ok(())
         }
-        Err(_) => Err(format!("Echec découpage: {}", project_name).into()),
+        Err(e) => Err(format!("Echec découpage: {}: {}", project_name, e).into()),
     }
 }
 
@@ -309,7 +315,7 @@ pub fn export_to_jpg(
 }
 
 pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, String> {
-    let project_path = format!("projects/{}/", project_name);
+    let project_path = format!("{}/{}/", projects_dir().to_string_lossy(), project_name);
     let output = Command::new("gdalinfo")
         .args([
             format!("{}{}.tiff", project_path, project_name),
@@ -359,7 +365,7 @@ pub fn get_geojson_bounding_box(
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - Un résultat indiquant le succès ou l'échec
 pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = std::path::Path::new("tmp");
+    let tmp_dir = temp_dir();
 
     if !tmp_dir.exists() {
         return Ok(());
@@ -384,4 +390,68 @@ pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+pub fn get_config() -> MutexGuard<'static, Config> {
+    CONFIG.lock().unwrap()
+}
+
+pub fn get_config_mut() -> MutexGuard<'static, Config> {
+    CONFIG.lock().unwrap()
+}
+
+pub fn cache_dir() -> PathBuf {
+    get_config().cache_dir.clone()
+}
+
+pub fn projects_dir() -> PathBuf {
+    get_config().projects_dir.clone()
+}
+
+pub fn temp_dir() -> PathBuf {
+    get_config().temp_dir.clone()
+}
+
+pub fn resource_dir() -> PathBuf {
+    get_config().resource_dir.clone()
+}
+
+pub fn output_location() -> PathBuf {
+    get_config().output_location.clone()
+}
+
+pub fn resolution() -> f64 {
+    get_config().resolution
+}
+
+pub fn slice_factor() -> u32 {
+    get_config().slice_factor
+}
+
+pub fn in_cache_dir<P: AsRef<Path>>(path: P) -> PathBuf {
+    cache_dir().join(path)
+}
+
+pub fn in_projects_dir<P: AsRef<Path>>(path: P) -> PathBuf {
+    projects_dir().join(path)
+}
+
+pub fn in_temp_dir<P: AsRef<Path>>(path: P) -> PathBuf {
+    temp_dir().join(path)
+}
+
+pub fn in_resource_dir<P: AsRef<Path>>(path: P) -> PathBuf {
+    resource_dir().join(path)
+}
+
+pub fn project_dir(project_name: &str) -> PathBuf {
+    in_projects_dir(project_name)
+}
+
+pub fn in_project_dir(project_name: &str, path: &str) -> PathBuf {
+    project_dir(project_name).join(path)
+}
+
+pub fn save_config() -> Result<(), Box<dyn std::error::Error>> {
+    get_config().save()
 }

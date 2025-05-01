@@ -2,7 +2,7 @@ use std::process::Command;
 
 use gdal::{DriverManager, spatial_ref::SpatialRef};
 
-use crate::utils::BoundingBox;
+use crate::utils::{BoundingBox, resolution};
 
 pub mod layers;
 pub mod processing;
@@ -48,7 +48,7 @@ pub fn create_project(
     project_file_path: &str,
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolution = 10.0;
+    let resolution = resolution();
     let width = (project_bb.width() / resolution).ceil() as usize;
     let height = (project_bb.height() / resolution).ceil() as usize;
     if !(width % 500 == 0 && height % 500 == 0) {

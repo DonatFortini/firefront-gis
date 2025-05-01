@@ -12,8 +12,8 @@ use crate::{
         regions::find_intersecting_regions,
     },
     utils::{
-        BoundingBox, clean_tmp_except_gpkg, create_directory_if_not_exists, export_project,
-        export_to_jpg, get_operating_system, get_previous_projects,
+        BoundingBox, cache_dir, clean_tmp_except_gpkg, create_directory_if_not_exists,
+        export_project, export_to_jpg, get_operating_system, get_previous_projects, projects_dir,
     },
     web_request::{download_shp_file, get_shp_file_urls},
 };
@@ -86,7 +86,12 @@ pub async fn create_project_com(
                 ),
             );
 
-            let cache_path = format!("projects/cache/{}_{}.7z", file_type, code);
+            let cache_path = format!(
+                "{}/{}_{}.7z",
+                cache_dir().to_string_lossy(),
+                file_type,
+                code
+            );
             if !Path::new(&cache_path).exists() {
                 download_shp_file(url, code).await.map_err(|e| {
                     format!(
@@ -99,7 +104,7 @@ pub async fn create_project_com(
     }
 
     let _ = app_handle.emit("progress-update", "Initialisation du projet");
-    let project_folder = format!("projects/{}", name);
+    let project_folder = format!("{}/{}", projects_dir().to_string_lossy(), name);
     let project_file_path = format!("{}/{}.tiff", project_folder, name);
 
     if std::path::Path::new(&project_file_path).exists() {
@@ -383,7 +388,7 @@ pub fn export(project_name: &str) -> Result<String, String> {
 /// * `Ok(String)` - "success" si la suppression a réussi.
 /// * `Err(String)` - Un message d'erreur descriptif en cas de problème.
 pub async fn delete_project(project_name: &str) -> Result<String, String> {
-    let project_folder = format!("projects/{}", project_name);
+    let project_folder = format!("{}/{}", projects_dir().to_string_lossy(), project_name);
     if !std::path::Path::new(&project_folder).exists() {
         return Err(format!("Le projet '{}' n'existe pas", project_name));
     }
@@ -460,9 +465,10 @@ pub fn save_settings(
 ///
 /// * `Result<String, String>` : Un message de succès ou d'erreur.
 pub fn clear_cache() -> Result<String, String> {
-    match std::fs::remove_dir_all("projects/cache") {
+    match std::fs::remove_dir_all(cache_dir()) {
         Ok(_) => {
-            create_directory_if_not_exists("projects/cache").map_err(|e| e.to_string())?;
+            create_directory_if_not_exists(cache_dir().to_string_lossy().as_ref())
+                .map_err(|e| e.to_string())?;
             Ok("Cache vidé avec succès".to_string())
         }
         Err(e) => Err(format!("Échec du vidage du cache: {}", e)),

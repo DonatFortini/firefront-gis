@@ -1,6 +1,9 @@
 mod common;
 
-use firefront_gis_lib::{gis_operation::slicing::slice_images, utils::get_project_bounding_box};
+use firefront_gis_lib::{
+    gis_operation::slicing::slice_images,
+    utils::{get_project_bounding_box, projects_dir},
+};
 
 #[test]
 fn test_project_bounding_box() {
@@ -18,5 +21,12 @@ fn test_project_bounding_box() {
 fn test_slice_images() {
     let project_name = "porto-vecchio";
     slice_images(project_name, 500).unwrap();
-    assert!(std::path::Path::new(&format!("projects/{}/slices", project_name)).exists());
+    assert!(
+        std::path::Path::new(&format!(
+            "{}/{}/slices",
+            projects_dir().to_string_lossy(),
+            project_name
+        ))
+        .exists()
+    );
 }
