@@ -5,7 +5,6 @@ use std::str;
 #[derive(Debug)]
 pub enum DependencyError {
     GDALNotInstalled,
-    PythonNotInstalled,
     SevenZipNotInstalled,
 }
 
@@ -32,27 +31,19 @@ fn check_command(command: &str, arg: &str, error: DependencyError) -> Result<(),
 /// # Retourne
 /// - Result<(), DependencyError>
 pub fn check_dependencies(config: &mut Config) -> Result<(), DependencyError> {
-    let (gdal_command, python_command, path_command, seven_zip_command) =
-        if cfg!(target_os = "windows") {
-            ("gdalinfo.exe", "python", "where", "7z.exe")
-        } else {
-            ("gdalinfo", "python3", "which", "7z")
-        };
+    let (gdal_command, path_command, seven_zip_command) = if cfg!(target_os = "windows") {
+        ("gdalinfo.exe", "where", "7z.exe")
+    } else {
+        ("gdalinfo", "which", "7z")
+    };
 
-    for (command, arg, error, path_field) in [
-        (
+    {
+        let (command, arg, error, path_field) = (
             gdal_command,
             "--version",
             DependencyError::GDALNotInstalled,
             &mut config.gdal_path,
-        ),
-        (
-            python_command,
-            "--version",
-            DependencyError::PythonNotInstalled,
-            &mut config.python_path,
-        ),
-    ] {
+        );
         check_command(command, arg, error)?;
         if let Ok(path_output) = Command::new(path_command).arg(command).output() {
             let path = str::from_utf8(&path_output.stdout)

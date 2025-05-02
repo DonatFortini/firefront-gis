@@ -420,15 +420,10 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
         .gdal_path
         .as_ref()
         .map(|p| p.to_string_lossy().to_string());
-    let python_path = config
-        .python_path
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
 
     Ok(serde_json::json!({
         "output_location": output_location,
         "gdal_path": gdal_path,
-        "python_path": python_path,
     }))
 }
 
@@ -439,18 +434,13 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
 ///
 /// * `output_location` - Option<String> : L'emplacement de sortie.
 /// * `gdal_path` - Option<String> : Le chemin vers GDAL.
-/// * `python_path` - Option<String> : Le chemin vers Python.
 ///
 /// # Retourne
 ///
 /// * `String` : Un message de succès ou d'erreur.
-pub fn save_settings(
-    output_location: Option<String>,
-    gdal_path: Option<String>,
-    python_path: Option<String>,
-) -> String {
+pub fn save_settings(output_location: Option<String>, gdal_path: Option<String>) -> String {
     let mut config = app_setup::CONFIG.lock().unwrap();
-    match config.update_settings(output_location, gdal_path, python_path) {
+    match config.update_settings(output_location, gdal_path) {
         Ok(_) => "Paramètres sauvegardés avec succès".to_string(),
         Err(e) => {
             format!("Échec de sauvegarde des paramètres: {}", e)

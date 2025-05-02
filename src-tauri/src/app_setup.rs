@@ -21,7 +21,6 @@ pub struct Config {
     // User configurable settings
     pub output_location: PathBuf,
     pub gdal_path: Option<PathBuf>,
-    pub python_path: Option<PathBuf>,
 }
 
 lazy_static! {
@@ -39,7 +38,6 @@ impl Default for Config {
             slice_factor: 500,
             output_location: OUTPUT_DIR.lock().unwrap().clone(),
             gdal_path: None,
-            python_path: None,
         }
     }
 }
@@ -72,15 +70,12 @@ impl Config {
         &mut self,
         output_location: Option<String>,
         gdal_path: Option<String>,
-        python_path: Option<String>,
     ) -> Result<(), Box<dyn Error>> {
         if let Some(output) = output_location {
             self.output_location = PathBuf::from(output);
         }
 
         self.gdal_path = gdal_path.map(PathBuf::from);
-        self.python_path = python_path.map(PathBuf::from);
-
         self.save()?;
         Ok(())
     }
@@ -107,7 +102,6 @@ impl fmt::Display for DependencyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DependencyError::GDALNotInstalled => write!(f, "GDAL is not installed"),
-            DependencyError::PythonNotInstalled => write!(f, "Python is not installed"),
             DependencyError::SevenZipNotInstalled => write!(f, "7zip is not installed"),
         }
     }

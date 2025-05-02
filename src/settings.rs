@@ -31,7 +31,6 @@ pub fn settings_component() -> Html {
     let os = use_state(|| String::from("Inconnu"));
     let output_location = use_state(String::new);
     let gdal_path = use_state(String::new);
-    let python_path = use_state(String::new);
     let app_settings_loaded = use_state(|| false);
     let status_message = use_state(|| Option::<(String, bool)>::None);
 
@@ -50,7 +49,6 @@ pub fn settings_component() -> Html {
     {
         let output_location = output_location.clone();
         let gdal_path = gdal_path.clone();
-        let python_path = python_path.clone();
         let settings_loaded = app_settings_loaded.clone();
 
         use_effect_with((), move |_| {
@@ -74,14 +72,6 @@ pub fn settings_component() -> Html {
                                 if !gdal.is_null() {
                                     if let Some(path) = gdal.as_str() {
                                         gdal_path.set(path.to_string());
-                                    }
-                                }
-                            }
-
-                            if let Some(python) = settings.get("python_path") {
-                                if !python.is_null() {
-                                    if let Some(path) = python.as_str() {
-                                        python_path.set(path.to_string());
                                     }
                                 }
                             }
@@ -149,30 +139,6 @@ pub fn settings_component() -> Html {
         })
     };
 
-    let on_browse_python = {
-        let python_path = python_path.clone();
-        Callback::from(move |_| {
-            let python_path = python_path.clone();
-            spawn_local(async move {
-                let options = DialogOptions {
-                    directory: false,
-                    default_path: if python_path.is_empty() {
-                        None
-                    } else {
-                        Some((*python_path).clone())
-                    },
-                    title: String::from("Sélectionner l'exécutable Python"),
-                };
-
-                if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
-                    if let Some(selected_path) = open(args).await.as_string() {
-                        python_path.set(selected_path);
-                    }
-                }
-            });
-        })
-    };
-
     let on_clear_cache = {
         let status_message = status_message.clone();
 
@@ -202,7 +168,6 @@ pub fn settings_component() -> Html {
     let on_submit = {
         let output_location = output_location.clone();
         let gdal_path = gdal_path.clone();
-        let python_path = python_path.clone();
         let status_message = status_message.clone();
 
         Callback::from(move |e: SubmitEvent| {
@@ -210,7 +175,6 @@ pub fn settings_component() -> Html {
 
             let output_location = output_location.clone();
             let gdal_path = gdal_path.clone();
-            let python_path = python_path.clone();
             let status_message = status_message.clone();
 
             spawn_local(async move {
@@ -222,14 +186,6 @@ pub fn settings_component() -> Html {
                         None
                     } else {
                         Some((*gdal_path).clone())
-                    },
-                );
-                map.insert(
-                    "python_path",
-                    if python_path.is_empty() {
-                        None
-                    } else {
-                        Some((*python_path).clone())
                     },
                 );
 
@@ -301,19 +257,7 @@ pub fn settings_component() -> Html {
                         <button type="button" onclick={on_browse_gdal}>{"Parcourir"}</button>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label for="python-path">{"Chemin d'installation de Python"}</label>
-                    <div class="input-with-button">
-                        <input
-                            type="text"
-                            id="python-path"
-                            placeholder="Détecté automatiquement"
-                            value={(*python_path).clone()}
-                            readonly=true
-                        />
-                        <button type="button" onclick={on_browse_python}>{"Parcourir"}</button>
-                    </div>
-                </div>
+
                 <div class="button-group">
                     <div class="primary-action">
                         <button type="submit" class="save-btn">{"Sauvegarder les paramètres"}</button>

@@ -8,10 +8,9 @@ pub fn documentation() -> Html {
 
             <div class="doc-section">
                 <h3>{"Dépendances"}</h3>
-                <p>{"Firefront nécessite l'installation de GDAL, Python et 7zip sur votre système."}</p>
+                <p>{"Firefront nécessite l'installation de GDAL et 7zip sur votre système."}</p>
                 <ul>
                     <li>{"GDAL : Pour le traitement géospatial"}</li>
-                    <li>{"Python : Pour les scripts de traitement supplémentaires"}</li>
                     <li>{"7zip : Pour extraire les archives de données"}</li>
                 </ul>
             </div>
