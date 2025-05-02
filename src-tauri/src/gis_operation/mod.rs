@@ -96,7 +96,7 @@ pub fn convert_to_gpkg(
     let current_dir = std::env::current_dir()?;
     let input_file_path = current_dir.join(input_file);
     let output_gpkg_path = current_dir.join(output_gpkg);
-
+    // FIXME : add the cross-platform support
     let status = Command::new("ogr2ogr")
         .args([
             "-f",
@@ -151,6 +151,7 @@ pub fn fusion_datasets(
     }
 
     let first_dataset = &datasets[0];
+    // FIXME : add the cross-platform support
     let mut status = Command::new("ogr2ogr")
         .arg("-f")
         .arg("GPKG")
@@ -163,6 +164,7 @@ pub fn fusion_datasets(
     }
 
     for dataset in datasets.iter().skip(1) {
+        // FIXME : add the cross-platform support
         status = Command::new("ogr2ogr")
             .arg("-f")
             .arg("GPKG")
@@ -199,7 +201,7 @@ pub fn clip_to_bb(
     let current_dir = std::env::current_dir()?;
     let input_gpkg = current_dir.join(input_gpkg);
     let output_gpkg = current_dir.join(output_gpkg);
-
+    // FIXME : add the cross-platform support
     let status = Command::new("ogr2ogr")
         .args([
             "-f",

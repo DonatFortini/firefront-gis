@@ -122,6 +122,7 @@ fn save_and_process_slice(
 }
 
 fn process_with_imagemagick(image_path: &str, image_type: &str) -> Result<(), String> {
+    // TODO : check imagemacgick
     Command::new("magick")
         .args(["convert", image_path, "-enhance", image_path])
         .output()

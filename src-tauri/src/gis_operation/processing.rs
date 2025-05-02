@@ -65,7 +65,7 @@ pub fn rasterize_layer(
 
     args.push(vector_gpkg);
     args.push(output_raster);
-
+    // FIXME : add the cross-platform support
     let status = Command::new("gdal_rasterize").args(args).status()?;
 
     if !status.success() {

@@ -142,7 +142,7 @@ pub fn compress_folder(
     destination_directory: &str,
 ) -> Result<(), Box<dyn Error>> {
     let output_zip_path = format!("{}/{}.zip", destination_directory, output_zip_name);
-
+    // FIXME : add the cross-platform support
     let mut command = Command::new("7z");
     command.args(["a", &output_zip_path]);
     command.current_dir(source_folder_path);
@@ -164,7 +164,7 @@ pub fn extract_files_by_name(
     create_directory_if_not_exists(output_dir)?;
     let temp_extract_dir = Path::new(output_dir).join("temp_extract");
     create_directory_if_not_exists(temp_extract_dir.to_str().unwrap())?;
-
+    // FIXME : add the cross-platform support
     let extract_output = Command::new("7z")
         .args([
             "x",
@@ -221,7 +221,7 @@ fn find_files_by_basename(
 
     Ok(())
 }
-
+// FIXME : add the cross-platform support
 pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn Error>> {
     #[cfg(target_os = "windows")]
     let output = Command::new("cmd")
@@ -303,6 +303,7 @@ pub fn export_to_jpg(
     project_file_path: &str,
     output_jpg_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // TODO : check if cross-platform support is needed and if needed, and need installation
     let magick_status = Command::new("magick")
         .args([project_file_path, output_jpg_path])
         .status()?;
@@ -316,6 +317,7 @@ pub fn export_to_jpg(
 
 pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, String> {
     let project_path = format!("{}/{}/", projects_dir().to_string_lossy(), project_name);
+    // FIXME : add the cross-platform support
     let output = Command::new("gdalinfo")
         .args([
             format!("{}{}.tiff", project_path, project_name),
@@ -339,6 +341,7 @@ pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, Strin
 pub fn get_geojson_bounding_box(
     file_path: &str,
 ) -> Result<BoundingBox, Box<dyn std::error::Error>> {
+    // FIXME : add the cross-platform support
     let output = Command::new("ogrinfo")
         .args(["-so", "-al", file_path])
         .output()?;

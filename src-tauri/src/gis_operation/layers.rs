@@ -509,7 +509,7 @@ pub fn add_topo_layer(
             temp_topo_layer,
         ]
     };
-
+    // FIXME : add the cross-platform support
     let status = Command::new("gdal_rasterize").args(args).status()?;
 
     if !status.success() {
@@ -794,7 +794,7 @@ pub fn download_satellite_jpeg(
     while !success && attempts < max_attempts {
         attempts += 1;
         println!("Tentative de téléchargement {}/{}", attempts, max_attempts);
-
+        // FIXME : add the cross-platform support
         let status = Command::new("gdal_translate")
             .args([
                 "-of",
@@ -832,7 +832,7 @@ pub fn download_satellite_jpeg(
     }
 
     let temp_jpg = format!("{}/satellite_temp.jpg", temp_dir);
-
+    // TODO : check if ImageMagick is installed, need to be installed on the system and is cross-platform
     let magick_status = Command::new("magick")
         .args([
             &temp_satellite,
