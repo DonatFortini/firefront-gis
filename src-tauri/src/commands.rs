@@ -18,6 +18,8 @@ use crate::{
     web_request::{download_shp_file, get_shp_file_urls},
 };
 
+//TODO : modify to adapt to 3.11 of gdal
+
 #[command(rename_all = "snake_case")]
 /// Crée un projet avec les fichiers SHP associés.
 /// Télécharge les fichiers SHP nécessaires, crée un projet de carte,

@@ -712,6 +712,8 @@ pub fn add_layers(
     Ok(())
 }
 
+//FIXME: orthophoto sur les format paysage
+
 /// Télécharge une image satellite JPEG pour une étendue donnée avec une résolution de 10m/pixel
 /// Cette fonction utilise le service WMS de geoportail pour télécharger une image satellite
 /// et utilise ImageMagick pour traiter l'image.
