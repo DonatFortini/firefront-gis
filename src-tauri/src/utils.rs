@@ -1,5 +1,6 @@
 use crate::app_setup::{CONFIG, Config};
 use gdal::vector::Geometry;
+use image_convert;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -293,7 +294,7 @@ pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
 ///
 /// # Arguments
 ///
-/// * `project_file_path` - chemin du fichier projet à exporter
+/// * `project_file_path` - chemin du fichier projet à exporter (format GTiff)
 /// * `output_jpg_path` - chemin du fichier JPEG de sortie
 ///
 /// # Returns
@@ -303,13 +304,13 @@ pub fn export_to_jpg(
     project_file_path: &str,
     output_jpg_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // TODO : check if cross-platform support is needed and if needed, and need installation
-    let magick_status = Command::new("magick")
-        .args([project_file_path, output_jpg_path])
-        .status()?;
+    let input = image_convert::ImageResource::from_path(project_file_path);
+    let mut output = image_convert::ImageResource::from_path(output_jpg_path);
+    let config = image_convert::JPGConfig::default();
+    let status = image_convert::to_jpg(&mut output, &input, &config);
 
-    if !magick_status.success() {
-        return Err("Failed to export to JPEG using ImageMagick".into());
+    if let Err(e) = status {
+        return Err(Box::new(e));
     }
 
     Ok(())

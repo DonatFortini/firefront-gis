@@ -1,5 +1,6 @@
 use gdal::vector::{LayerAccess, OGRwkbGeometryType};
 use gdal::{Dataset, DriverManager};
+use image_convert;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
@@ -796,25 +797,28 @@ pub fn download_satellite_jpeg(
     while !success && attempts < max_attempts {
         attempts += 1;
         println!("Tentative de téléchargement {}/{}", attempts, max_attempts);
-        // FIXME : add the cross-platform support
-        let status = Command::new("gdal_translate")
-            .args([
-                "-of",
-                "GTiff",
-                "-co",
-                "COMPRESS=JPEG",
-                "-co",
-                "JPEG_QUALITY=95",
-                "-co",
-                "PHOTOMETRIC=RGB",
-                "-co",
-                "BIGTIFF=YES",
-                &wms_file,
-                &temp_satellite,
-            ])
-            .status()?;
-
-        if status.success() {
+        if let Ok(wms_dataset) = Dataset::open(&wms_file) {
+            let driver = DriverManager::get_driver_by_name("GTiff")?;
+            let (width, height) = (wms_dataset.raster_size().0, wms_dataset.raster_size().1);
+            let mut out_ds =
+                driver.create(&temp_satellite, width, height, wms_dataset.raster_count())?;
+            out_ds.set_geo_transform(&wms_dataset.geo_transform()?)?;
+            out_ds.set_projection(&wms_dataset.projection())?;
+            for band_index in 1..=wms_dataset.raster_count() {
+                let in_band = wms_dataset.rasterband(band_index)?;
+                let mut out_band = out_ds.rasterband(band_index)?;
+                let data: Vec<u8> = in_band
+                    .read_as::<u8>((0, 0), (width, height), (width, height), None)?
+                    .data()
+                    .to_vec();
+                out_band.write(
+                    (0, 0),
+                    (width, height),
+                    &mut gdal::raster::Buffer::new((width, height), data),
+                )?;
+            }
+            out_ds.close().unwrap();
+            wms_dataset.close().unwrap();
             success = true;
         } else if attempts < max_attempts {
             println!("Échec, nouvelle tentative dans 5 secondes...");
@@ -834,22 +838,33 @@ pub fn download_satellite_jpeg(
     }
 
     let temp_jpg = format!("{}/satellite_temp.jpg", temp_dir);
-    // TODO : check if ImageMagick is installed, need to be installed on the system and is cross-platform
-    let magick_status = Command::new("magick")
-        .args([
-            &temp_satellite,
-            "-resize",
-            &format!("{}x{}", width, height),
-            "-colorspace",
-            "sRGB",
-            "-type",
-            "TrueColor",
-            &temp_jpg,
-        ])
-        .status()?;
 
-    if !magick_status.success() {
-        return Err("Échec de la conversion en JPEG avec ImageMagick".into());
+    let input_staellite = image_convert::ImageResource::from_path(temp_satellite.clone());
+
+    let mut output_temp = image_convert::ImageResource::from_path(temp_jpg.clone());
+
+    let config = image_convert::JPGConfig {
+        strip_metadata: true,
+        width: width as u16,
+        height: height as u16,
+        crop: None,
+        shrink_only: false,
+        sharpen: -1.0,
+        respect_orientation: false,
+        force_to_chroma_quartered: false,
+        quality: 90,
+        background_color: None,
+        ppi: None,
+    };
+
+    let magick_status = image_convert::to_jpg(&mut output_temp, &input_staellite, &config);
+
+    if magick_status.is_err() {
+        return Err(format!(
+            "Erreur lors de la conversion de l'image satellite en JPEG: {:?}",
+            magick_status
+        )
+        .into());
     }
 
     if Path::new(&temp_jpg).exists() {

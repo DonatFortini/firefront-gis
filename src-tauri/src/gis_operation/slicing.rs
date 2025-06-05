@@ -1,7 +1,7 @@
 use crate::utils::{create_directory_if_not_exists, get_project_bounding_box, projects_dir};
 use image::{DynamicImage, GenericImageView};
+use image_convert;
 use std::fs;
-use std::process::Command;
 
 pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String> {
     let projects_dir_path = projects_dir();
@@ -122,15 +122,22 @@ fn save_and_process_slice(
 }
 
 fn process_with_imagemagick(image_path: &str, image_type: &str) -> Result<(), String> {
-    // TODO : check imagemacgick
-    Command::new("magick")
-        .args(["convert", image_path, "-enhance", image_path])
-        .output()
-        .map_err(|e| {
-            format!(
-                "Failed to process {} slice with ImageMagick: {}",
-                image_type, e
-            )
-        })?;
+    let config = image_convert::JPGConfig {
+        quality: 90,
+        ..Default::default()
+    };
+    let mut input = image_convert::ImageResource::from_path(image_path);
+    let output = image_convert::ImageResource::from_path(image_path);
+
+    let magick_status = image_convert::to_jpg(&mut input, &output, &config);
+
+    if magick_status.is_err() {
+        return Err(format!(
+            "Failed to process {} image with ImageMagick: {}",
+            image_type,
+            magick_status.unwrap_err()
+        ));
+    }
+
     Ok(())
 }
