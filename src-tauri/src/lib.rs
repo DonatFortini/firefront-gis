@@ -5,6 +5,7 @@ use commands::{
 };
 
 pub mod app_setup;
+pub mod archive_utils;
 pub mod commands;
 pub mod dependency;
 pub mod gis_operation;
@@ -13,11 +14,24 @@ pub mod web_request;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    setup_check().expect("Setup check failed");
-
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let app_handle = app.handle();
+            match setup_check(app_handle) {
+                Ok(_) => {
+                    println!("Application setup completed successfully");
+                    Ok(())
+                }
+                Err(_) => {
+                    eprintln!("Application setup failed");
+                    Err(Box::<dyn std::error::Error>::from(
+                        "Application setup failed",
+                    ))
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             create_project_com,
             get_projects,

@@ -1,4 +1,8 @@
 use crate::app_setup::{CONFIG, Config};
+use crate::archive_utils::{
+    compress_folder as archive_compress_folder,
+    extract_files_by_name as archive_extract_files_by_name,
+};
 use gdal::vector::Geometry;
 use image_convert;
 use lazy_static::lazy_static;
@@ -137,117 +141,57 @@ pub fn create_directory_if_not_exists(path: &str) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+/// Cross-platform archive compression using pure Rust implementation
+/// Supports ZIP, 7Z, TAR, TAR.GZ, TAR.BZ2 input formats, outputs as ZIP
 pub fn compress_folder(
     source_folder_path: &str,
     output_zip_name: &str,
     destination_directory: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let output_zip_path = format!("{}/{}.zip", destination_directory, output_zip_name);
-    // FIXME : add the cross-platform support
-    let mut command = Command::new("7z");
-    command.args(["a", &output_zip_path]);
-    command.current_dir(source_folder_path);
-    command.arg(".");
-    let output = command.output()?;
-
-    if !output.status.success() {
-        return Err(format!("Failed to execute 7z command: {:?}", output).into());
-    }
-
-    Ok(())
+    archive_compress_folder(source_folder_path, output_zip_name, destination_directory)
 }
 
+/// Cross-platform archive extraction using pure Rust implementation
+/// Supports ZIP, 7Z, TAR, TAR.GZ, TAR.BZ2 input formats
 pub fn extract_files_by_name(
     archive_path: &str,
     target_filename: &str,
     output_dir: &str,
 ) -> Result<(), Box<dyn Error>> {
-    create_directory_if_not_exists(output_dir)?;
-    let temp_extract_dir = Path::new(output_dir).join("temp_extract");
-    create_directory_if_not_exists(temp_extract_dir.to_str().unwrap())?;
-    // FIXME : add the cross-platform support
-    let extract_output = Command::new("7z")
-        .args([
-            "x",
-            archive_path,
-            &format!("-o{}", temp_extract_dir.to_str().unwrap()),
-        ])
-        .output()?;
-
-    if !extract_output.status.success() {
-        return Err("Archive extraction failed".into());
-    }
-
-    let destination = Path::new(output_dir).join(target_filename);
-    create_directory_if_not_exists(destination.to_str().unwrap())?;
-
-    let mut found_files = Vec::new();
-    find_files_by_basename(&temp_extract_dir, target_filename, &mut found_files)?;
-
-    if found_files.is_empty() {
-        return Err(format!("No files matching '{}' found in archive", target_filename).into());
-    }
-
-    for file_path in &found_files {
-        let file_name = file_path.file_name().unwrap();
-        let dest_path = destination.join(file_name);
-        fs::copy(file_path, dest_path)?;
-    }
-
-    fs::remove_dir_all(temp_extract_dir)?;
-
-    Ok(())
+    archive_extract_files_by_name(archive_path, target_filename, output_dir)
 }
 
-fn find_files_by_basename(
-    dir: &Path,
-    target_basename: &str,
-    result: &mut Vec<PathBuf>,
-) -> Result<(), Box<dyn Error>> {
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
+/// Get list of previous projects using cross-platform directory listing
+pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn Error>> {
+    let projects_path = projects_dir();
+    let mut projects = HashMap::new();
 
-            if path.is_file() {
-                if let Some(file_stem) = path.file_stem() {
-                    if file_stem.to_string_lossy() == target_basename {
-                        result.push(path);
-                    }
+    if !projects_path.exists() {
+        return Ok(projects);
+    }
+
+    for entry in fs::read_dir(&projects_path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            if let Some(project_name) = path.file_name().and_then(|n| n.to_str()) {
+                if project_name != "cache" {
+                    let project_path = project_dir(project_name);
+                    let preview_image_path =
+                        project_path.join(format!("{}_ORTHO.jpeg", project_name));
+                    projects.insert(
+                        project_name.to_string(),
+                        vec![
+                            preview_image_path.to_string_lossy().to_string(),
+                            project_path.to_string_lossy().to_string(),
+                        ],
+                    );
                 }
-            } else if path.is_dir() {
-                find_files_by_basename(&path, target_basename, result)?;
             }
         }
     }
 
-    Ok(())
-}
-// FIXME : add the cross-platform support
-pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn Error>> {
-    #[cfg(target_os = "windows")]
-    let output = Command::new("cmd")
-        .args(&["/C", "dir", &projects_dir().to_string_lossy(), "/b", "/a:d"])
-        .output()?;
-    #[cfg(not(target_os = "windows"))]
-    let output = Command::new("ls")
-        .args([projects_dir().to_string_lossy().as_ref()])
-        .output()?;
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let mut projects = HashMap::new();
-    for line in output_str.lines() {
-        let project_name = line.trim();
-        if project_name != "cache" {
-            let project_path = project_dir(project_name);
-            let preview_image_path = project_path.join(format!("{}_ORTHO.jpeg", project_name));
-            projects.insert(
-                project_name.to_string(),
-                vec![
-                    preview_image_path.to_string_lossy().to_string(),
-                    project_path.to_string_lossy().to_string(),
-                ],
-            );
-        }
-    }
     Ok(projects)
 }
 

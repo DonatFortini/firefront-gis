@@ -5,7 +5,6 @@ use std::str;
 #[derive(Debug)]
 pub enum DependencyError {
     GDALNotInstalled,
-    SevenZipNotInstalled,
 }
 
 /// Vérifie si une commande existe en l'exécutant avec un argument spécifique.
@@ -26,15 +25,15 @@ fn check_command(command: &str, arg: &str, error: DependencyError) -> Result<(),
     }
 }
 
-/// Vérifie si toutes les dépendances sont installées.
+/// Vérifie si la dépendance GDAL est installée.
 ///
 /// # Retourne
 /// - Result<(), DependencyError>
 pub fn check_dependencies(config: &mut Config) -> Result<(), DependencyError> {
-    let (gdal_command, path_command, seven_zip_command) = if cfg!(target_os = "windows") {
-        ("gdalinfo.exe", "where", "7z.exe")
+    let (gdal_command, path_command) = if cfg!(target_os = "windows") {
+        ("gdalinfo.exe", "where")
     } else {
-        ("gdalinfo", "which", "7z")
+        ("gdalinfo", "which")
     };
 
     {
@@ -53,12 +52,6 @@ pub fn check_dependencies(config: &mut Config) -> Result<(), DependencyError> {
             println!("{} path set to: {}", command, path);
         }
     }
-
-    check_command(
-        seven_zip_command,
-        "--help",
-        DependencyError::SevenZipNotInstalled,
-    )?;
 
     Ok(())
 }

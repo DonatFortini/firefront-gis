@@ -9,8 +9,18 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
 
-#[derive(Debug, Serialize, Deserialize)]
+const CACHE_DIR: &str = "projects/cache";
+const PROJECTS_DIR: &str = "projects";
+const TEMP_DIR: &str = "tmp";
+const RESOURCES_DIR: &str = "resources";
+const CONFIG_FILE: &str = "config.json";
+const REGIONS_GRAPH_FILE: &str = "regions_graph.json";
+const DEFAULT_RESOLUTION: f64 = 10.0;
+const DEFAULT_SLICE_FACTOR: u32 = 500;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub cache_dir: PathBuf,
     pub projects_dir: PathBuf,
@@ -29,22 +39,32 @@ lazy_static! {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            cache_dir: PathBuf::from("projects/cache"),
-            projects_dir: PathBuf::from("projects"),
-            temp_dir: PathBuf::from("tmp"),
-            resource_dir: PathBuf::from("resources"),
-            resolution: 10.0,
-            slice_factor: 500,
-            output_location: OUTPUT_DIR.lock().unwrap().clone(),
-            gdal_path: None,
-        }
+        Self::with_resource_dir(PathBuf::from(RESOURCES_DIR))
     }
 }
 
 impl Config {
+    pub fn new(handle: &AppHandle) -> Self {
+        let resource_dir = resolve_resource_path(handle, RESOURCES_DIR)
+            .unwrap_or_else(|_| PathBuf::from(RESOURCES_DIR));
+        Self::with_resource_dir(resource_dir)
+    }
+
+    fn with_resource_dir(resource_dir: PathBuf) -> Self {
+        Self {
+            cache_dir: PathBuf::from(CACHE_DIR),
+            projects_dir: PathBuf::from(PROJECTS_DIR),
+            temp_dir: PathBuf::from(TEMP_DIR),
+            resource_dir,
+            resolution: DEFAULT_RESOLUTION,
+            slice_factor: DEFAULT_SLICE_FACTOR,
+            output_location: OUTPUT_DIR.lock().unwrap().clone(),
+            gdal_path: None,
+        }
+    }
+
     pub fn save(&self) -> Result<(), Box<dyn Error>> {
-        let config_path = PathBuf::from("config.json");
+        let config_path = PathBuf::from(CONFIG_FILE);
         let config_json = serde_json::to_string_pretty(self)?;
         let mut file = File::create(config_path)?;
         file.write_all(config_json.as_bytes())?;
@@ -52,7 +72,7 @@ impl Config {
     }
 
     pub fn load() -> Result<Self, Box<dyn Error>> {
-        let config_path = PathBuf::from("config.json");
+        let config_path = PathBuf::from(CONFIG_FILE);
         if !config_path.exists() {
             let default_config = Config::default();
             default_config.save()?;
@@ -79,22 +99,57 @@ impl Config {
         self.save()?;
         Ok(())
     }
+
+    pub fn regions_graph_path(&self) -> PathBuf {
+        self.resource_dir.join(REGIONS_GRAPH_FILE)
+    }
+
+    pub fn required_directories(&self) -> Vec<&PathBuf> {
+        vec![&self.cache_dir, &self.temp_dir]
+    }
 }
 
-/// Vérifie si les dépendances sont installées et crée les répertoires nécessaires.
+fn resolve_resource_path(handle: &AppHandle, resource_path: &str) -> Result<PathBuf, String> {
+    handle
+        .path()
+        .resolve(resource_path, tauri::path::BaseDirectory::Resource)
+        .map_err(|e| format!("Failed to resolve resource path '{}': {}", resource_path, e))
+}
+
+/// Initialise la configuration originale de l'application
+/// et vérifie les dépendances nécessaires.
+///
+/// # Arguments
+/// * `handle` - L'handle de l'application Tauri.
 ///
 /// # Returns
-/// - Result<(), DependencyError>
-pub fn setup_check() -> Result<(), String> {
-    let mut config = CONFIG.lock().unwrap();
+/// * `Ok(())` si la configuration et les dépendances sont correctement initialisées.
+pub fn setup_check(handle: &AppHandle) -> Result<(), String> {
+    let config = Config::new(handle);
+    {
+        let mut config_guard = CONFIG
+            .lock()
+            .map_err(|e| format!("Failed to lock CONFIG: {}", e))?;
+        *config_guard = config.clone();
+    }
 
-    create_directory_if_not_exists(&config.cache_dir.to_string_lossy())
-        .map_err(|e| e.to_string())?;
-    create_directory_if_not_exists(&config.temp_dir.to_string_lossy())
-        .map_err(|e| e.to_string())?;
+    for dir in [&config.cache_dir, &config.temp_dir] {
+        create_directory_if_not_exists(&dir.to_string_lossy()).map_err(|e| e.to_string())?;
+    }
 
-    check_dependencies(&mut config).map_err(|e| e.to_string())?;
-    build_regions_graph(Some("resources/regions_graph.json")).map_err(|e| e.to_string())?;
+    let regions_graph_path = config.regions_graph_path();
+    let regions_graph_str = regions_graph_path
+        .to_str()
+        .ok_or_else(|| "Invalid UTF-8 in regions graph path".to_string())?;
+
+    build_regions_graph(Some(regions_graph_str)).map_err(|e| e.to_string())?;
+
+    {
+        let mut config_guard = CONFIG
+            .lock()
+            .map_err(|e| format!("Failed to lock CONFIG: {}", e))?;
+        check_dependencies(&mut config_guard).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -102,7 +157,6 @@ impl fmt::Display for DependencyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DependencyError::GDALNotInstalled => write!(f, "GDAL is not installed"),
-            DependencyError::SevenZipNotInstalled => write!(f, "7zip is not installed"),
         }
     }
 }
