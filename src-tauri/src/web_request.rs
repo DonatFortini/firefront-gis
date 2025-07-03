@@ -43,7 +43,7 @@ pub async fn get_departement_shp_file_url(code: &str, url: &str) -> Result<Strin
     let mut shp_files: Vec<String> = document
         .select(&selector)
         .filter_map(|element| element.value().attr("href"))
-        .filter(|href| href.contains(&format!("{}{}", code_prefix, code)) && href.contains("SHP"))
+        .filter(|href| href.contains(&format!("{code_prefix}{code}")) && href.contains("SHP"))
         .map(|s| s.to_string())
         .collect();
 
@@ -123,7 +123,7 @@ pub async fn download_shp_file(url: &str, code: &str) -> Result<(), Box<dyn Erro
     };
     let cache_dir_path = cache_dir();
     let cache_folder_path = cache_dir_path.to_str().unwrap_or_default();
-    let archive_path = format!("{}/{}_{}.7z", cache_folder_path, name, code);
+    let archive_path = format!("{cache_folder_path}/{name}_{code}.7z");
 
     if Path::new(&archive_path).exists() {
         fs::remove_file(&archive_path)?;

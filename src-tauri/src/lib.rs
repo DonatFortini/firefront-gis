@@ -1,13 +1,11 @@
-use app_setup::setup_check;
+use app_setup::initialize_app;
 use commands::{
     clear_cache, create_project_com, delete_project, export, get_os, get_projects, get_settings,
     save_settings,
 };
 
 pub mod app_setup;
-pub mod archive_utils;
 pub mod commands;
-pub mod dependency;
 pub mod gis_operation;
 pub mod utils;
 pub mod web_request;
@@ -19,16 +17,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle();
-            match setup_check(app_handle) {
+            match initialize_app(app_handle) {
                 Ok(_) => {
                     println!("Application setup completed successfully");
                     Ok(())
                 }
-                Err(_) => {
-                    eprintln!("Application setup failed");
-                    Err(Box::<dyn std::error::Error>::from(
-                        "Application setup failed",
-                    ))
+                Err(e) => {
+                    eprintln!("Application setup failed: {e:?}");
+                    Err(Box::<dyn std::error::Error>::from(format!(
+                        "Application setup failed: {e:?}"
+                    )))
                 }
             }
         })

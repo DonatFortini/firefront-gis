@@ -12,8 +12,8 @@ use gdal::Dataset;
 use std::fs;
 use std::path::Path;
 
-#[test]
-fn test_end_to_end_workflow() {
+#[tokio::test]
+async fn test_end_to_end_workflow() {
     create_directory_if_not_exists("tmp").unwrap();
     let project_bb = get_test_bounding_box();
     let project_file_path = "tests/res/test1.tiff";
@@ -32,9 +32,9 @@ fn test_end_to_end_workflow() {
     ];
 
     for (archive, folder, expected_file) in files_to_extract {
-        let result = extract_files_by_name(archive, folder, "tmp");
-        assert_result_ok(&result, &format!("Extraction of {} failed", folder));
-        assert_file_exists(expected_file, &format!("{} was not created", folder));
+        let result = extract_files_by_name(archive, folder, "tmp").await;
+        assert_result_ok(&result, &format!("Extraction of {folder} failed"));
+        assert_file_exists(expected_file, &format!("{folder} was not created"));
     }
 
     let topo_subfolders = vec![
@@ -54,11 +54,11 @@ fn test_end_to_end_workflow() {
     ];
 
     for subfolder in &topo_subfolders {
-        let result = extract_files_by_name("tests/res/BDTOPO_2A.7z", subfolder, "tmp");
-        assert_result_ok(&result, &format!("Extraction of {} failed", subfolder));
+        let result = extract_files_by_name("tests/res/BDTOPO_2A.7z", subfolder, "tmp").await;
+        assert_result_ok(&result, &format!("Extraction of {subfolder} failed"));
         assert_file_exists(
-            &format!("tmp/{}/{}.shp", subfolder, subfolder),
-            &format!("{} shapefile was not created", subfolder),
+            &format!("tmp/{subfolder}/{subfolder}.shp"),
+            &format!("{subfolder} shapefile was not created"),
         );
     }
     let result = create_region_geojson("2A", "tmp/2A.geojson");
@@ -82,17 +82,17 @@ fn test_end_to_end_workflow() {
         let result = convert_to_gpkg(input, output);
         assert_result_ok(
             &result,
-            &format!("Conversion of {} to GeoPackage failed", input),
+            &format!("Conversion of {input} to GeoPackage failed"),
         );
     }
 
     for subfolder in &topo_subfolders {
-        let shapefile_path = format!("tmp/{}/{}.shp", subfolder, subfolder);
-        let gpkg_path = format!("tests/res/test_{}.gpkg", subfolder);
+        let shapefile_path = format!("tmp/{subfolder}/{subfolder}.shp");
+        let gpkg_path = format!("tests/res/test_{subfolder}.gpkg");
         let result = convert_to_gpkg(&shapefile_path, &gpkg_path);
         assert_result_ok(
             &result,
-            &format!("Conversion of {} to GeoPackage failed", subfolder),
+            &format!("Conversion of {subfolder} to GeoPackage failed"),
         );
     }
 
@@ -110,14 +110,14 @@ fn test_end_to_end_workflow() {
 
     for (input, output) in gpkg_to_clip {
         let result = clip_to_bb(input, output, &project_bb);
-        assert_result_ok(&result, &format!("Clipping of {} failed", input));
+        assert_result_ok(&result, &format!("Clipping of {input} failed"));
     }
 
     for subfolder in &topo_subfolders {
-        let gpkg_path = format!("tests/res/test_{}.gpkg", subfolder);
-        let clipped_gpkg_path = format!("tests/res/test_{}_clipped.gpkg", subfolder);
+        let gpkg_path = format!("tests/res/test_{subfolder}.gpkg");
+        let clipped_gpkg_path = format!("tests/res/test_{subfolder}_clipped.gpkg");
         let result = clip_to_bb(&gpkg_path, &clipped_gpkg_path, &project_bb);
-        assert_result_ok(&result, &format!("Clipping of {} failed", subfolder));
+        assert_result_ok(&result, &format!("Clipping of {subfolder} failed"));
     }
 
     type LayerAdder = fn(&str, &str) -> Result<(), Box<dyn std::error::Error>>;
@@ -132,15 +132,15 @@ fn test_end_to_end_workflow() {
 
     for (layer, add_layer_fn) in layers_to_add {
         let result = add_layer_fn(project_file_path, layer);
-        assert_result_ok(&result, &format!("Adding layer {} failed", layer));
+        assert_result_ok(&result, &format!("Adding layer {layer} failed"));
     }
 
     for subfolder in &topo_subfolders {
-        let clipped_gpkg_path = format!("tests/res/test_{}_clipped.gpkg", subfolder);
+        let clipped_gpkg_path = format!("tests/res/test_{subfolder}_clipped.gpkg");
         let result = add_topo_layer(project_file_path, &clipped_gpkg_path);
         assert_result_ok(
             &result,
-            &format!("Adding topography layer {} failed", subfolder),
+            &format!("Adding topography layer {subfolder} failed"),
         );
     }
 
@@ -161,9 +161,7 @@ fn test_end_to_end_workflow() {
     let pixel_size_y = -geotransform[5];
     assert!(
         (pixel_size_x - 10.0).abs() < 0.001 && (pixel_size_y - 10.0).abs() < 0.001,
-        "Resolution is not 10 meters per pixel: pixel_size_x = {}, pixel_size_y = {}",
-        pixel_size_x,
-        pixel_size_y
+        "Resolution is not 10 meters per pixel: pixel_size_x = {pixel_size_x}, pixel_size_y = {pixel_size_y}"
     );
 
     let test_dir = Path::new("tests/res");

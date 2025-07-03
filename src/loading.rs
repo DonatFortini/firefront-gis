@@ -153,7 +153,7 @@ fn setup_progress_tracking(
         let (main_message, subtask, count) = parse_progress_message(&payload);
         let percentage = get_progress_percentage(&main_message);
 
-        web_sys::console::log_1(&format!("Progress update: {}", payload).into());
+        web_sys::console::log_1(&format!("Progress update: {payload}").into());
 
         progress_state_clone.set(ProgressState {
             message: main_message.clone(),
@@ -191,7 +191,7 @@ fn handle_project_success(project_name: String, on_view_change: Callback<AppView
         wait_timeout(1000).await;
         on_view_change.emit(AppView::Project(ProjectData {
             name: project_name.clone(),
-            file_path: format!("projects/{}/{}_VEGET.jpeg", project_name, project_name),
+            file_path: format!("projects/{project_name}/{project_name}_VEGET.jpeg"),
             view_mode: ViewMode::Vegetation,
         }));
     });

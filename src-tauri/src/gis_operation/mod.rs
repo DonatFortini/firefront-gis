@@ -160,7 +160,7 @@ pub fn fusion_datasets(
         .status()?;
 
     if !status.success() {
-        return Err(format!("Failed to process first dataset: {}", first_dataset).into());
+        return Err(format!("Failed to process first dataset: {first_dataset}").into());
     }
 
     for dataset in datasets.iter().skip(1) {
@@ -175,7 +175,7 @@ pub fn fusion_datasets(
             .status()?;
 
         if !status.success() {
-            return Err(format!("Failed to append dataset: {}", dataset).into());
+            return Err(format!("Failed to append dataset: {dataset}").into());
         }
     }
 

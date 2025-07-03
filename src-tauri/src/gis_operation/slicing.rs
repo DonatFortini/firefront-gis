@@ -6,13 +6,13 @@ use std::fs;
 pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String> {
     let projects_dir_path = projects_dir();
     let project_folder = projects_dir_path.to_str().unwrap();
-    let project_path = format!("{}/{}/", project_folder, project_name);
-    let slice_path = format!("{}/{}/slices/", project_folder, project_name);
+    let project_path = format!("{project_folder}/{project_name}/");
+    let slice_path = format!("{project_folder}/{project_name}/slices/");
 
     prepare_directories(&slice_path)?;
 
-    let veget_image_path = format!("{}{}_VEGET.jpeg", project_path, project_name);
-    let ortho_image_path = format!("{}{}_ORTHO.jpeg", project_path, project_name);
+    let veget_image_path = format!("{project_path}{project_name}_VEGET.jpeg");
+    let ortho_image_path = format!("{project_path}{project_name}_ORTHO.jpeg");
 
     let veget_image = load_image(&veget_image_path, "VEGET")?;
     let ortho_image = load_image(&ortho_image_path, "ORTHO")?;
@@ -34,17 +34,17 @@ pub fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String>
 }
 
 fn prepare_directories(slice_path: &str) -> Result<(), String> {
-    fs::remove_dir_all(slice_path).map_err(|e| format!("Failed to remove directory: {}", e))?;
+    fs::remove_dir_all(slice_path).map_err(|e| format!("Failed to remove directory: {e}"))?;
     create_directory_if_not_exists(slice_path)
-        .map_err(|e| format!("Failed to create directory: {}", e))?;
+        .map_err(|e| format!("Failed to create directory: {e}"))?;
     Ok(())
 }
 
 fn load_image(image_path: &str, image_type: &str) -> Result<DynamicImage, String> {
     image::ImageReader::open(image_path)
-        .map_err(|e| format!("Failed to open {} image: {}", image_type, e))?
+        .map_err(|e| format!("Failed to open {image_type} image: {e}"))?
         .decode()
-        .map_err(|e| format!("Failed to decode {} image: {}", image_type, e))
+        .map_err(|e| format!("Failed to decode {image_type} image: {e}"))
 }
 
 fn calculate_base_coordinates(xmin: f64, ymin: f64) -> (u32, u32) {
@@ -97,23 +97,17 @@ fn save_and_process_slice(
     coord_y: u32,
     slice_factor: u32,
 ) -> Result<(), String> {
-    let veget_path = format!(
-        "{}/{}_{}_veget_{}.jpg",
-        slice_path, coord_x, coord_y, slice_factor
-    );
+    let veget_path = format!("{slice_path}/{coord_x}_{coord_y}_veget_{slice_factor}.jpg");
 
-    let ortho_path = format!(
-        "{}/{}_{}_{}.jpg",
-        slice_path, coord_x, coord_y, slice_factor
-    );
+    let ortho_path = format!("{slice_path}/{coord_x}_{coord_y}_{slice_factor}.jpg");
 
     cropped_veget
         .save(&veget_path)
-        .map_err(|e| format!("Failed to save VEGET slice: {}", e))?;
+        .map_err(|e| format!("Failed to save VEGET slice: {e}"))?;
 
     cropped_ortho
         .save(&ortho_path)
-        .map_err(|e| format!("Failed to save ORTHO slice: {}", e))?;
+        .map_err(|e| format!("Failed to save ORTHO slice: {e}"))?;
 
     process_with_imagemagick(&veget_path, "VEGET")?;
     process_with_imagemagick(&ortho_path, "ORTHO")?;

@@ -12,12 +12,12 @@ pub fn remove_file_if_exists(file_path: &str) {
 
 #[allow(unused)]
 pub fn assert_file_exists(file_path: &str, message: &str) {
-    assert!(Path::new(file_path).exists(), "{}", message);
+    assert!(Path::new(file_path).exists(), "{message}");
 }
 
 #[allow(unused)]
 pub fn assert_result_ok<T, E: std::fmt::Debug>(result: &Result<T, E>, message: &str) {
-    assert!(result.is_ok(), "{}: {:?}", message, result.as_ref().err());
+    assert!(result.is_ok(), "{message}: {:?}", result.as_ref().err());
 }
 
 #[allow(unused)]
@@ -26,8 +26,7 @@ pub fn check_jpeg_properties(file_path: &str, expected_resolution: f64, label: &
     let (width, height) = dataset.raster_size();
     assert_eq!(
         width, height,
-        "{} raster is not square: width = {}, height = {}",
-        label, width, height
+        "{label} raster is not square: width = {width}, height = {height}"
     );
 
     let geotransform = dataset.geo_transform().unwrap();
@@ -36,11 +35,7 @@ pub fn check_jpeg_properties(file_path: &str, expected_resolution: f64, label: &
     assert!(
         (pixel_size_x - expected_resolution).abs() < 0.001
             && (pixel_size_y - expected_resolution).abs() < 0.001,
-        "{} resolution is not {} meters per pixel: pixel_size_x = {}, pixel_size_y = {}",
-        label,
-        expected_resolution,
-        pixel_size_x,
-        pixel_size_y
+        "{label} resolution is not {expected_resolution} meters per pixel: pixel_size_x = {pixel_size_x}, pixel_size_y = {pixel_size_y}"
     );
 
     dataset.close().unwrap();
@@ -54,9 +49,7 @@ pub fn assert_jpegs_match(file1: &str, file2: &str) {
     assert_eq!(
         ds1.raster_size(),
         ds2.raster_size(),
-        "JPEG dimensions do not match: file1 = {}, file2 = {}",
-        file1,
-        file2
+        "JPEG dimensions do not match: file1 = {file1}, file2 = {file2}"
     );
 
     let gt1 = ds1.geo_transform().unwrap();
@@ -65,9 +58,7 @@ pub fn assert_jpegs_match(file1: &str, file2: &str) {
         gt1.iter()
             .zip(gt2.iter())
             .all(|(a, b)| (a - b).abs() < 0.001),
-        "Geotransform values do not match: file1 = {:?}, file2 = {:?}",
-        gt1,
-        gt2
+        "Geotransform values do not match: file1 = {gt1:?}, file2 = {gt2:?}"
     );
 
     ds1.close().unwrap();

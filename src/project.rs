@@ -27,8 +27,8 @@ pub fn project(props: &ProjectProps) -> Html {
     let project_name = project_data.name.clone();
 
     let file_path = match view_mode {
-        ViewMode::Vegetation => format!("projects/{}/{}_VEGET.jpeg", project_name, project_name),
-        ViewMode::Satellite => format!("projects/{}/{}_ORTHO.jpeg", project_name, project_name),
+        ViewMode::Vegetation => format!("projects/{project_name}/{project_name}_VEGET.jpeg"),
+        ViewMode::Satellite => format!("projects/{project_name}/{project_name}_ORTHO.jpeg"),
     };
 
     let image_path = convertFileSrc(&file_path, None);

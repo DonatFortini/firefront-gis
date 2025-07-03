@@ -48,7 +48,7 @@ impl Visitor<'_> for GeometryVisitor {
     where
         E: de::Error,
     {
-        Geometry::from_wkt(value).map_err(|e| de::Error::custom(format!("Invalid WKT: {}", e)))
+        Geometry::from_wkt(value).map_err(|e| de::Error::custom(format!("Invalid WKT: {e}")))
     }
 }
 
@@ -132,7 +132,7 @@ impl Region {
 pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Error>> {
     if let Some(path) = &output_file {
         if Path::new(path).exists() {
-            println!("Loading regions graph from cache file: {}", path);
+            println!("Loading regions graph from cache file: {path}");
             let json_str = fs::read_to_string(path)?;
             let _: HashMap<String, Region> = serde_json::from_str(&json_str)?;
             return Ok(true);
@@ -142,7 +142,7 @@ pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Er
     let binding = current_dir()?.join("resources/regions.geojson");
     let regional_geojson_path = binding.to_str().unwrap();
     if !Path::new(regional_geojson_path).exists() {
-        return Err(format!("Input file not found: {}", regional_geojson_path).into());
+        return Err(format!("Input file not found: {regional_geojson_path}").into());
     }
 
     let geojson_str = fs::read_to_string(regional_geojson_path)?;
@@ -177,7 +177,7 @@ pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Er
         let gdal_geom = match Geometry::from_geojson(&geojson_str) {
             Ok(g) => g,
             Err(e) => {
-                eprintln!("Failed to convert geometry for region {}: {}", code, e);
+                eprintln!("Failed to convert geometry for region {code}: {e}");
                 continue;
             }
         };
@@ -221,7 +221,7 @@ pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Er
         let json_str = serde_json::to_string_pretty(&regions_info)?;
         let mut file = File::create(path)?;
         file.write_all(json_str.as_bytes())?;
-        println!("Regions graph saved to: {}", path);
+        println!("Regions graph saved to: {path}");
     }
 
     Ok(true)
@@ -261,7 +261,7 @@ pub fn get_neighbors(region_id: &str) -> Result<Vec<Region>, Box<dyn Error>> {
             .collect();
         Ok(neighbors)
     } else {
-        Err(format!("Region code '{}' not found in the graph", region_id).into())
+        Err(format!("Region code '{region_id}' not found in the graph").into())
     }
 }
 
@@ -271,7 +271,7 @@ pub fn get_region(region_id: &str) -> Result<Region, Box<dyn Error>> {
     graph
         .get(region_id)
         .cloned()
-        .ok_or_else(|| format!("Region code '{}' not found in the graph", region_id).into())
+        .ok_or_else(|| format!("Region code '{region_id}' not found in the graph").into())
 }
 
 /// Détermine quelles régions intersectent avec une boîte englobante donnée

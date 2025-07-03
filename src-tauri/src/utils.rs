@@ -1,8 +1,4 @@
-use crate::app_setup::{CONFIG, Config};
-use crate::archive_utils::{
-    compress_folder as archive_compress_folder,
-    extract_files_by_name as archive_extract_files_by_name,
-};
+use crate::app_setup::{AppConfig, CONFIG};
 use gdal::vector::Geometry;
 use image_convert;
 use lazy_static::lazy_static;
@@ -14,6 +10,7 @@ use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::MutexGuard;
+use tauri_plugin_shell::ShellExt;
 use xdg_user;
 
 use crate::gis_operation::slicing::slice_images;
@@ -141,24 +138,123 @@ pub fn create_directory_if_not_exists(path: &str) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Cross-platform archive compression using pure Rust implementation
-/// Supports ZIP, 7Z, TAR, TAR.GZ, TAR.BZ2 input formats, outputs as ZIP
-pub fn compress_folder(
+pub async fn compress_folder(
     source_folder_path: &str,
     output_zip_name: &str,
     destination_directory: &str,
 ) -> Result<(), Box<dyn Error>> {
-    archive_compress_folder(source_folder_path, output_zip_name, destination_directory)
+    let output_zip_path = format!("{destination_directory}/{output_zip_name}.zip");
+    let app_handle = get_handle().unwrap();
+
+    let output = app_handle
+        .shell()
+        .sidecar("7z")?
+        .args(["a", &output_zip_path, "."])
+        .current_dir(source_folder_path)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "Failed to execute 7z command. Status: {:?}\nStdout: {}\nStderr: {}",
+            output.status, stdout, stderr
+        )
+        .into());
+    }
+
+    println!("Successfully compressed folder '{source_folder_path}' to '{output_zip_path}'");
+    Ok(())
 }
 
-/// Cross-platform archive extraction using pure Rust implementation
-/// Supports ZIP, 7Z, TAR, TAR.GZ, TAR.BZ2 input formats
-pub fn extract_files_by_name(
+pub async fn extract_files_by_name(
     archive_path: &str,
     target_filename: &str,
     output_dir: &str,
 ) -> Result<(), Box<dyn Error>> {
-    archive_extract_files_by_name(archive_path, target_filename, output_dir)
+    create_directory_if_not_exists(output_dir)?;
+    let temp_extract_dir = Path::new(output_dir).join("temp_extract");
+    create_directory_if_not_exists(temp_extract_dir.to_str().unwrap())?;
+
+    let app_handle = get_handle().unwrap();
+    let extract_output = app_handle
+        .shell()
+        .sidecar("7z")?
+        .args([
+            "x",
+            archive_path,
+            &format!("-o{}", temp_extract_dir.to_str().unwrap()),
+        ])
+        .output()
+        .await?;
+
+    if !extract_output.status.success() {
+        let stderr = String::from_utf8_lossy(&extract_output.stderr);
+        let stdout = String::from_utf8_lossy(&extract_output.stdout);
+        return Err(format!(
+            "Failed to execute 7z command. Status: {:?}\nStdout: {}\
+            \nStderr: {}",
+            extract_output.status, stdout, stderr
+        )
+        .into());
+    }
+
+    // let extract_output = Command::new("7z")
+    //     .args([
+    //         "x",
+    //         archive_path,
+    //         &format!("-o{}", temp_extract_dir.to_str().unwrap()),
+    //     ])
+    //     .output()?;
+
+    // if !extract_output.status.success() {
+    //     return Err("Archive extraction failed".into());
+    // }
+
+    let destination = Path::new(output_dir).join(target_filename);
+    create_directory_if_not_exists(destination.to_str().unwrap())?;
+
+    let mut found_files = Vec::new();
+    find_files_by_basename(&temp_extract_dir, target_filename, &mut found_files)?;
+
+    if found_files.is_empty() {
+        return Err(format!("No files matching '{target_filename}' found in archive").into());
+    }
+
+    for file_path in &found_files {
+        let file_name = file_path.file_name().unwrap();
+        let dest_path = destination.join(file_name);
+        fs::copy(file_path, dest_path)?;
+    }
+
+    fs::remove_dir_all(temp_extract_dir)?;
+
+    Ok(())
+}
+
+fn find_files_by_basename(
+    dir: &Path,
+    target_basename: &str,
+    result: &mut Vec<PathBuf>,
+) -> Result<(), Box<dyn Error>> {
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+
+            if path.is_file() {
+                if let Some(file_stem) = path.file_stem() {
+                    if file_stem.to_string_lossy() == target_basename {
+                        result.push(path);
+                    }
+                }
+            } else if path.is_dir() {
+                find_files_by_basename(&path, target_basename, result)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Get list of previous projects using cross-platform directory listing
@@ -179,7 +275,7 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
                 if project_name != "cache" {
                     let project_path = project_dir(project_name);
                     let preview_image_path =
-                        project_path.join(format!("{}_ORTHO.jpeg", project_name));
+                        project_path.join(format!("{project_name}_ORTHO.jpeg"));
                     projects.insert(
                         project_name.to_string(),
                         vec![
@@ -208,8 +304,7 @@ pub fn get_operating_system() -> &'static str {
 ///
 /// # Returns
 ///
-/// * `Result<(), Box<dyn Error>>` - Un résultat indiquant si l'exportation a réussi ou échoué.
-pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
+pub async fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
     let project_path = format!("{}/{}", projects_dir().to_string_lossy(), project_name);
     let slice_factor_value = slice_factor();
     let output_dir = output_location().to_string_lossy().to_string();
@@ -223,12 +318,13 @@ pub fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
         Ok(_) => {
             compress_folder(
                 &project_path,
-                &format!("export_{}_{}", project_name, date),
+                &format!("export_{project_name}_{date}"),
                 &output_dir,
-            )?;
+            )
+            .await?;
             Ok(())
         }
-        Err(e) => Err(format!("Echec découpage: {}: {}", project_name, e).into()),
+        Err(e) => Err(format!("Echec découpage: {project_name}: {e}").into()),
     }
 }
 
@@ -265,13 +361,13 @@ pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, Strin
     // FIXME : add the cross-platform support
     let output = Command::new("gdalinfo")
         .args([
-            format!("{}{}.tiff", project_path, project_name),
+            format!("{project_path}{project_name}.tiff"),
             "-json".to_owned(),
         ])
         .output();
 
     let json_output: Value = serde_json::from_slice(&output.unwrap().stdout)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        .map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     let corner_coordinates = json_output["cornerCoordinates"].as_object().unwrap();
 
@@ -340,11 +436,11 @@ pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn get_config() -> MutexGuard<'static, Config> {
+pub fn get_config() -> MutexGuard<'static, AppConfig> {
     CONFIG.lock().unwrap()
 }
 
-pub fn get_config_mut() -> MutexGuard<'static, Config> {
+pub fn get_config_mut() -> MutexGuard<'static, AppConfig> {
     CONFIG.lock().unwrap()
 }
 
@@ -374,6 +470,10 @@ pub fn resolution() -> f64 {
 
 pub fn slice_factor() -> u32 {
     get_config().slice_factor
+}
+
+pub fn get_handle() -> Option<tauri::AppHandle> {
+    get_config().handle.clone()
 }
 
 pub fn in_cache_dir<P: AsRef<Path>>(path: P) -> PathBuf {

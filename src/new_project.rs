@@ -209,7 +209,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                 let result = invoke("create_project_com", serialized_args).await;
 
                 if let Err(e) = serde_wasm_bindgen::from_value::<()>(result) {
-                    web_sys::console::log_1(&format!("Error: {:?}", e).into());
+                    web_sys::console::log_1(&format!("Error: {e:?}").into());
                     validation_errors.set(vec![
                         "Une erreur est survenue lors de la création du projet".to_string(),
                     ]);

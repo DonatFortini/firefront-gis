@@ -71,7 +71,7 @@ pub fn home(props: &HomeProps) -> Html {
                         load_projects(projects.clone());
                     } else {
                         web_sys::console::error_1(
-                            &format!("Erreur lors de la suppression: {}", result).into(),
+                            &format!("Erreur lors de la suppression: {result}").into(),
                         );
                     }
                 };

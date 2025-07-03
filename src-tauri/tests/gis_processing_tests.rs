@@ -39,12 +39,14 @@ fn test_project_creation() {
     remove_file_if_exists(project_path);
 }
 
-#[test]
-fn test_shapefile_to_gpkg_conversion() {
+#[tokio::test]
+async fn test_shapefile_to_gpkg_conversion() {
     let input_shapefile = "tmp/FORMATION_VEGETALE/FORMATION_VEGETALE.shp";
     let output_gpkg = "tests/res/vegetation.gpkg";
 
-    extract_files_by_name("tests/res/BDFORET_2a.7z", "FORMATION_VEGETALE", "tmp").unwrap();
+    extract_files_by_name("tests/res/BDFORET_2a.7z", "FORMATION_VEGETALE", "tmp")
+        .await
+        .unwrap();
     remove_file_if_exists(output_gpkg);
 
     let result = convert_to_gpkg(input_shapefile, output_gpkg);
@@ -56,15 +58,17 @@ fn test_shapefile_to_gpkg_conversion() {
     dataset.close().unwrap();
 }
 
-#[test]
-fn test_clip_shapefile() {
+#[tokio::test]
+async fn test_clip_shapefile() {
     let input_shapefile = "tmp/FORMATION_VEGETALE/FORMATION_VEGETALE.shp";
     let output_gpkg = "tests/res/clipped_vegetation.gpkg";
     let project_bb = get_test_bounding_box();
 
     remove_file_if_exists(output_gpkg);
 
-    extract_files_by_name("tests/res/BDFORET_2a.7z", "FORMATION_VEGETALE", "tmp").unwrap();
+    extract_files_by_name("tests/res/BDFORET_2a.7z", "FORMATION_VEGETALE", "tmp")
+        .await
+        .unwrap();
     let result = clip_to_bb(input_shapefile, output_gpkg, &project_bb);
     assert_result_ok(&result, "Clipping shapefile failed");
 
@@ -108,17 +112,14 @@ fn test_export_to_jpeg() {
     let (width, height) = dataset.raster_size();
     assert_eq!(
         width, height,
-        "JPEG raster is not square: width = {}, height = {}",
-        width, height
+        "JPEG raster is not square: width = {width}, height = {height}"
     );
 
     let geotransform = dataset.geo_transform().unwrap();
     let (pixel_size_x, pixel_size_y) = (geotransform[1], -geotransform[5]);
     assert!(
         (pixel_size_x - 10.0).abs() < 0.001 && (pixel_size_y - 10.0).abs() < 0.001,
-        "Resolution is not 10 meters per pixel: pixel_size_x = {}, pixel_size_y = {}",
-        pixel_size_x,
-        pixel_size_y
+        "Resolution is not 10 meters per pixel: pixel_size_x = {pixel_size_x}, pixel_size_y = {pixel_size_y}"
     );
 
     dataset.close().unwrap();
@@ -147,15 +148,19 @@ fn test_satellite_download_and_compare() {
     remove_file_if_exists(vegetation_jpg);
 }
 
-#[test]
-fn test_fusion() {
+#[tokio::test]
+async fn test_fusion() {
     let veget_path_2a = "tests/res/BDFORET_2A.7z";
     let veget_path_2b = "tests/res/BDFORET_2B.7z";
     create_directory_if_not_exists("tmp").unwrap();
 
-    extract_files_by_name(veget_path_2a, "FORMATION_VEGETALE", "tmp").unwrap();
+    extract_files_by_name(veget_path_2a, "FORMATION_VEGETALE", "tmp")
+        .await
+        .unwrap();
     fs::rename("tmp/FORMATION_VEGETALE", "tmp/FORMATION_VEGETALE_2A").unwrap();
-    extract_files_by_name(veget_path_2b, "FORMATION_VEGETALE", "tmp").unwrap();
+    extract_files_by_name(veget_path_2b, "FORMATION_VEGETALE", "tmp")
+        .await
+        .unwrap();
     fs::rename("tmp/FORMATION_VEGETALE", "tmp/FORMATION_VEGETALE_2B").unwrap();
 
     let dataset = [

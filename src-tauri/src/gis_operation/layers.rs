@@ -41,20 +41,20 @@ pub async fn prepare_layers(
         "Préparation des Couches|Préparation de l'étendue régionale|1/4",
     );
 
-    let regional_geojson_path = format!("{}/{}.geojson", temp_dir, code);
+    let regional_geojson_path = format!("{temp_dir}/{code}.geojson");
     create_region_geojson(code, &regional_geojson_path).unwrap();
 
-    let temp_regional_gpkg = format!("{}/{}.gpkg", temp_dir, code);
-    let regional_gpkg = format!("{}/{}_region.gpkg", temp_dir, code);
+    let temp_regional_gpkg = format!("{temp_dir}/{code}.gpkg");
+    let regional_gpkg = format!("{temp_dir}/{code}_region.gpkg");
 
     let _ = convert_to_gpkg(&regional_geojson_path, &temp_regional_gpkg);
     let _ = clip_to_bb(&temp_regional_gpkg, &regional_gpkg, project_bb);
 
     let mut layers: HashMap<String, Vec<&str>> = HashMap::new();
-    layers.insert(format!("BDFORET_{}.7z", code), vec!["FORMATION_VEGETALE"]);
-    layers.insert(format!("RPG_{}.7z", code), vec!["PARCELLES_GRAPHIQUES"]);
+    layers.insert(format!("BDFORET_{code}.7z"), vec!["FORMATION_VEGETALE"]);
+    layers.insert(format!("RPG_{code}.7z"), vec!["PARCELLES_GRAPHIQUES"]);
     layers.insert(
-        format!("BDTOPO_{}.7z", code),
+        format!("BDTOPO_{code}.7z"),
         vec![
             "AERODROME",
             "CONSTRUCTION_SURFACIQUE",
@@ -100,7 +100,7 @@ pub async fn prepare_layers(
             ),
         );
 
-        let archive_path = format!("{}/{}", cache_folder_path, archive);
+        let archive_path = format!("{cache_folder_path}/{archive}");
 
         let total_files = files.len();
         for (file_index, file) in files.iter().enumerate() {
@@ -114,16 +114,15 @@ pub async fn prepare_layers(
                 ),
             );
 
-            extract_files_by_name(&archive_path, file, &temp_dir).map_err(|e| {
+            extract_files_by_name(&archive_path, file, &temp_dir).await.map_err(|e| {
                 format!(
-                    "Erreur lors de l'extraction du fichier {} depuis l'archive {}: {:?}",
-                    file, archive, e
+                    "Erreur lors de l'extraction du fichier {file} depuis l'archive {archive}: {e:?}"
                 )
             })?;
 
-            let temp_file = format!("{}/{}/{}.shp", temp_dir, file, file);
-            let temp_gpkg = format!("{}/{}.gpkg", temp_dir, file);
-            let output_gpkg = format!("{}/{}_{}.gpkg", temp_dir, code, file);
+            let temp_file = format!("{temp_dir}/{file}/{file}.shp");
+            let temp_gpkg = format!("{temp_dir}/{file}.gpkg");
+            let output_gpkg = format!("{temp_dir}/{code}_{file}.gpkg");
 
             let _ = app_handle.emit(
                 "progress-update",
@@ -137,8 +136,7 @@ pub async fn prepare_layers(
 
             if let Err(e) = convert_to_gpkg(&temp_file, &temp_gpkg) {
                 return Err(format!(
-                    "Erreur lors de la conversion du fichier {} en GPKG: {:?}",
-                    temp_file, e
+                    "Erreur lors de la conversion du fichier {temp_file} en GPKG: {e:?}"
                 ));
             }
 
@@ -154,8 +152,7 @@ pub async fn prepare_layers(
 
             if let Err(e) = clip_to_bb(&temp_gpkg, &output_gpkg, project_bb) {
                 return Err(format!(
-                    "Erreur lors du découpage du fichier {}: {:?}",
-                    temp_gpkg, e
+                    "Erreur lors du découpage du fichier {temp_gpkg}: {e:?}"
                 ));
             }
 
@@ -300,10 +297,10 @@ pub fn add_vegetation_layer(
     let all_types = feuillus_types
         .iter()
         .chain(undefined_types.iter())
-        .map(|t| format!("'{}'", t))
+        .map(|t| format!("'{t}'"))
         .collect::<Vec<String>>()
         .join(", ");
-    let other_where = format!("ESSENCE NOT IN ({})", all_types);
+    let other_where = format!("ESSENCE NOT IN ({all_types})");
     let temp_vegetation = "tmp/temp_vegetation.tif";
     let temp_feuillus = "tmp/temp_feuillus.tif";
     let temp_undefined = "tmp/temp_undefined.tif";
@@ -384,16 +381,11 @@ pub fn add_vegetation_layer(
             .iter()
             .zip(undefined_data.iter())
             .zip(other_data.iter())
-            .map(|((&f, &u), &o)| {
-                if f > 0 {
-                    f
-                } else if u > 0 {
-                    u
-                } else if o > 0 {
-                    o
-                } else {
-                    0
-                }
+            .map(|((&f, &u), &o)| match (f, u, o) {
+                (v, _, _) if v > 0 => v,
+                (_, v, _) if v > 0 => v,
+                (_, _, v) if v > 0 => v,
+                _ => 0,
             })
             .collect();
 
@@ -636,9 +628,9 @@ pub fn add_layers(
 
     if let Err(e) = add_regional_layer(
         project_file_path,
-        &format!("{}/resources/{}.gpkg", project_folder, project_name),
+        &format!("{project_folder}/resources/{project_name}.gpkg"),
     ) {
-        println!("Failed to add regional layer: {:?}", e);
+        println!("Failed to add regional layer: {e:?}");
         return Err(e);
     }
 
@@ -678,8 +670,7 @@ pub fn add_layers(
         let _ = app_handle.emit(
             "progress-update",
             format!(
-                "Ajout des Couches|Ajout des couches {}|{}/{}",
-                layer_type, layer_index, total_layer_types
+                "Ajout des Couches|Ajout des couches {layer_type}|{layer_index}/{total_layer_types}"
             ),
         );
 
@@ -695,7 +686,7 @@ pub fn add_layers(
                 ),
             );
 
-            let layer_path = format!("{}/resources/{}.gpkg", project_folder, file);
+            let layer_path = format!("{project_folder}/resources/{file}.gpkg");
             match key {
                 1 => add_vegetation_layer(project_file_path, &layer_path),
                 2 => add_rpg_layer(project_file_path, &layer_path),
@@ -734,20 +725,17 @@ pub fn download_satellite_jpeg(
     let temp_dir = temp_dir().to_string_lossy().to_string();
     create_directory_if_not_exists(&temp_dir)?;
 
-    let wms_cache_dir = format!("{}/wms_cache", temp_dir);
+    let wms_cache_dir = format!("{temp_dir}/wms_cache");
     create_directory_if_not_exists(&wms_cache_dir)?;
 
     let resolution = resolution();
     let width = ((project_bb.xmax - project_bb.xmin) / resolution).ceil() as usize;
     let height = ((project_bb.ymax - project_bb.ymin) / resolution).ceil() as usize;
 
-    println!(
-        "Dimensions calculées : largeur={}, hauteur={} pixels",
-        width, height
-    );
+    println!("Dimensions calculées : largeur={width}, hauteur={height} pixels");
 
-    let temp_satellite = format!("{}/satellite_temp.tif", temp_dir);
-    let wms_file = format!("{}/wms_config.xml", temp_dir);
+    let temp_satellite = format!("{temp_dir}/satellite_temp.tif");
+    let wms_file = format!("{temp_dir}/wms_config.xml");
     let wms_xml = format!(
         r#"<GDAL_WMS>
       <Service name="WMS">
@@ -796,7 +784,7 @@ pub fn download_satellite_jpeg(
 
     while !success && attempts < max_attempts {
         attempts += 1;
-        println!("Tentative de téléchargement {}/{}", attempts, max_attempts);
+        println!("Tentative de téléchargement {attempts}/{max_attempts}");
         if let Ok(wms_dataset) = Dataset::open(&wms_file) {
             let driver = DriverManager::get_driver_by_name("GTiff")?;
             let (width, height) = (wms_dataset.raster_size().0, wms_dataset.raster_size().1);
@@ -837,7 +825,7 @@ pub fn download_satellite_jpeg(
         return Err("Le fichier téléchargé est vide".into());
     }
 
-    let temp_jpg = format!("{}/satellite_temp.jpg", temp_dir);
+    let temp_jpg = format!("{temp_dir}/satellite_temp.jpg");
 
     let input_staellite = image_convert::ImageResource::from_path(temp_satellite.clone());
 
@@ -861,8 +849,7 @@ pub fn download_satellite_jpeg(
 
     if magick_status.is_err() {
         return Err(format!(
-            "Erreur lors de la conversion de l'image satellite en JPEG: {:?}",
-            magick_status
+            "Erreur lors de la conversion de l'image satellite en JPEG: {magick_status:?}"
         )
         .into());
     }

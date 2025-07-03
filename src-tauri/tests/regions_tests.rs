@@ -18,7 +18,7 @@ fn test_build_regions_graph() {
 fn test_get_neighbors() {
     let neighbors = get_neighbors("2A").unwrap();
     assert!(!neighbors.is_empty(), "No neighbors found for region 2A");
-    println!("Neighbors of 2A: {:?}", neighbors);
+    println!("Neighbors of 2A: {neighbors:?}");
 }
 
 #[test]

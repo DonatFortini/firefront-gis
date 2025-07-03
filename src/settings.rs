@@ -60,7 +60,7 @@ pub fn settings_component() -> Html {
 
                     match result.into_serde::<serde_json::Value>() {
                         Ok(settings) => {
-                            console::log_1(&format!("Parsed settings: {:?}", settings).into());
+                            console::log_1(&format!("Parsed settings: {settings:?}").into());
 
                             if let Some(output) =
                                 settings.get("output_location").and_then(|v| v.as_str())
@@ -79,7 +79,7 @@ pub fn settings_component() -> Html {
                             settings_loaded.set(true);
                         }
                         Err(e) => web_sys::console::error_1(
-                            &format!("Failed to parse settings: {:?}", e).into(),
+                            &format!("Failed to parse settings: {e:?}").into(),
                         ),
                     }
                 }
