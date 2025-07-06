@@ -17,10 +17,10 @@ fn test_project_bounding_box() {
     assert_eq!(bounding_box.ymin, 6070000.0, "Ymin mismatch");
 }
 
-#[test]
-fn test_slice_images() {
+#[tokio::test]
+async fn test_slice_images() {
     let project_name = "porto-vecchio";
-    slice_images(project_name, 500).unwrap();
+    slice_images(project_name, 500).await.unwrap();
     assert!(
         std::path::Path::new(&format!(
             "{}/{}/slices",

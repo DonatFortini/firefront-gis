@@ -100,12 +100,14 @@ fn test_get_regional_gpkg() {
     assert_result_ok(&result, "Creating regional GeoPackage failed");
 }
 
-#[test]
-fn test_export_to_jpeg() {
+#[tokio::test]
+async fn test_export_to_jpeg() {
     let input_tiff = "tests/res/test1.tiff";
     let output_jpeg = "tests/res/test1.jpg";
 
-    export_to_jpg(input_tiff, output_jpeg).expect("Export to JPEG failed");
+    export_to_jpg(input_tiff, output_jpeg)
+        .await
+        .expect("Export to JPEG failed");
     assert_file_exists(output_jpeg, "JPEG file was not created");
 
     let dataset = Dataset::open(output_jpeg).unwrap();
@@ -125,19 +127,19 @@ fn test_export_to_jpeg() {
     dataset.close().unwrap();
 }
 
-#[test]
-fn test_satellite_download_and_compare() {
+#[tokio::test]
+async fn test_satellite_download_and_compare() {
     let satellite_jpg = "tests/res/satellite.jpg";
     let vegetation_tiff = "tests/res/test1.tiff";
     let vegetation_jpg = "tests/res/test1_vegetation.jpg";
     let bounding_box = get_test_bounding_box();
 
-    let result = download_satellite_jpeg(satellite_jpg, &bounding_box);
+    let result = download_satellite_jpeg(satellite_jpg, &bounding_box).await;
     assert_result_ok(&result, "Failed to download satellite JPEG");
     assert_file_exists(satellite_jpg, "Satellite JPEG not created");
     check_jpeg_properties(satellite_jpg, 10.0, "Satellite JPEG");
 
-    let result = export_to_jpg(vegetation_tiff, vegetation_jpg);
+    let result = export_to_jpg(vegetation_tiff, vegetation_jpg).await;
     assert_result_ok(&result, "Failed to export vegetation to JPEG");
     check_jpeg_properties(vegetation_jpg, 10.0, "Vegetation JPEG");
 

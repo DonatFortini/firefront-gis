@@ -1,19 +1,19 @@
 use gdal::vector::{LayerAccess, OGRwkbGeometryType};
 use gdal::{Dataset, DriverManager};
-use image_convert;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tauri::Emitter;
+use tauri_plugin_shell::ShellExt;
 
 use super::processing::{apply_overlay, rasterize_layer};
 use super::regions::create_region_geojson;
 use super::{clip_to_bb, convert_to_gpkg};
 
 use crate::utils::{
-    BoundingBox, cache_dir, create_directory_if_not_exists, extract_files_by_name, resolution,
-    temp_dir,
+    BoundingBox, cache_dir, create_directory_if_not_exists, extract_files_by_name, get_handle,
+    resolution, temp_dir,
 };
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
@@ -718,7 +718,7 @@ pub fn add_layers(
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si le téléchargement a réussi ou échoué
-pub fn download_satellite_jpeg(
+pub async fn download_satellite_jpeg(
     output_jpg_path: &str,
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -827,32 +827,58 @@ pub fn download_satellite_jpeg(
 
     let temp_jpg = format!("{temp_dir}/satellite_temp.jpg");
 
-    let input_staellite = image_convert::ImageResource::from_path(temp_satellite.clone());
+    let app_handle = get_handle().unwrap();
 
-    let mut output_temp = image_convert::ImageResource::from_path(temp_jpg.clone());
+    let input_satellite = app_handle
+        .shell()
+        .sidecar("magick")?
+        .args([
+            "convert",
+            &temp_satellite,
+            "-strip",
+            "-resize",
+            &format!("{width}x{height}"),
+            "-quality",
+            "90",
+            &temp_jpg,
+        ])
+        .output()
+        .await?;
 
-    let config = image_convert::JPGConfig {
-        strip_metadata: true,
-        width: width as u16,
-        height: height as u16,
-        crop: None,
-        shrink_only: false,
-        sharpen: -1.0,
-        respect_orientation: false,
-        force_to_chroma_quartered: false,
-        quality: 90,
-        background_color: None,
-        ppi: None,
-    };
-
-    let magick_status = image_convert::to_jpg(&mut output_temp, &input_staellite, &config);
-
-    if magick_status.is_err() {
+    if !input_satellite.status.success() {
         return Err(format!(
-            "Erreur lors de la conversion de l'image satellite en JPEG: {magick_status:?}"
+            "Erreur lors de la conversion de l'image satellite en JPEG: {}",
+            String::from_utf8_lossy(&input_satellite.stderr)
         )
         .into());
     }
+
+    // let input_staellite = image_convert::ImageResource::from_path(temp_satellite.clone());
+
+    // let mut output_temp = image_convert::ImageResource::from_path(temp_jpg.clone());
+
+    // let config = image_convert::JPGConfig {
+    //     strip_metadata: true,
+    //     width: width as u16,
+    //     height: height as u16,
+    //     crop: None,
+    //     shrink_only: false,
+    //     sharpen: -1.0,
+    //     respect_orientation: false,
+    //     force_to_chroma_quartered: false,
+    //     quality: 90,
+    //     background_color: None,
+    //     ppi: None,
+    // };
+
+    // let magick_status = image_convert::to_jpg(&mut output_temp, &input_staellite, &config);
+
+    // if magick_status.is_err() {
+    //     return Err(format!(
+    //         "Erreur lors de la conversion de l'image satellite en JPEG: {magick_status:?}"
+    //     )
+    //     .into());
+    // }
 
     if Path::new(&temp_jpg).exists() {
         std::fs::rename(temp_jpg, output_jpg_path)?;

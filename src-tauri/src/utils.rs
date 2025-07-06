@@ -1,6 +1,5 @@
 use crate::app_setup::{AppConfig, CONFIG};
 use gdal::vector::Geometry;
-use image_convert;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -200,18 +199,6 @@ pub async fn extract_files_by_name(
         .into());
     }
 
-    // let extract_output = Command::new("7z")
-    //     .args([
-    //         "x",
-    //         archive_path,
-    //         &format!("-o{}", temp_extract_dir.to_str().unwrap()),
-    //     ])
-    //     .output()?;
-
-    // if !extract_output.status.success() {
-    //     return Err("Archive extraction failed".into());
-    // }
-
     let destination = Path::new(output_dir).join(target_filename);
     create_directory_if_not_exists(destination.to_str().unwrap())?;
 
@@ -314,7 +301,7 @@ pub async fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
         .unwrap()
         .as_secs();
 
-    match slice_images(project_name, slice_factor_value) {
+    match slice_images(project_name, slice_factor_value).await {
         Ok(_) => {
             compress_folder(
                 &project_path,
@@ -340,17 +327,33 @@ pub async fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'exportation a réussi ou échoué
-pub fn export_to_jpg(
+pub async fn export_to_jpg(
     project_file_path: &str,
     output_jpg_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let input = image_convert::ImageResource::from_path(project_file_path);
-    let mut output = image_convert::ImageResource::from_path(output_jpg_path);
-    let config = image_convert::JPGConfig::default();
-    let status = image_convert::to_jpg(&mut output, &input, &config);
+    let app_handle = get_handle().unwrap();
+    let output = app_handle
+        .shell()
+        .sidecar("magick")?
+        .args([
+            "convert",
+            project_file_path,
+            "-strip",
+            "-quality",
+            "85",
+            output_jpg_path,
+        ])
+        .output()
+        .await?;
 
-    if let Err(e) = status {
-        return Err(Box::new(e));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "Failed to execute ImageMagick command. Status: {:?}\nStdout: {}\nStderr: {}",
+            output.status, stdout, stderr
+        )
+        .into());
     }
 
     Ok(())

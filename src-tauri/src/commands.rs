@@ -292,7 +292,9 @@ pub async fn create_project_com(
     if let Err(e) = export_to_jpg(
         &project_file_path,
         format!("{project_folder}/{name}_VEGET.jpeg").as_str(),
-    ) {
+    )
+    .await
+    {
         return Err(format!("Erreur lors de l'exportation de l'image: {e:?}"));
     }
 
@@ -303,7 +305,9 @@ pub async fn create_project_com(
     if let Err(e) = download_satellite_jpeg(
         format!("{project_folder}/{name}_ORTHO.jpeg").as_str(),
         &project_bb,
-    ) {
+    )
+    .await
+    {
         return Err(format!(
             "Erreur lors du téléchargement de l'image satellite: {e:?}"
         ));
