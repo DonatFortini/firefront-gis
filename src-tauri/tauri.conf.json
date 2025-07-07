@@ -44,7 +44,7 @@
       "resources/**/*"
     ],
     "externalBin": [
-      "binaries/7z/7z",
+      "binaries/7z/_7z",
       "binaries/magick/magick"
     ]
   }

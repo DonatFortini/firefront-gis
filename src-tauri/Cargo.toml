@@ -28,7 +28,10 @@ scraper = "0.23.1"
 futures-util = "0.3.31"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+[target.'cfg(target_os="linux")'.dependencies]
 gdal = { version = "0.18.0", features = ["bindgen"] }
+[target.'cfg(target_os="windows")'.dependencies]
+gdal = "0.18.0"
 image = "0.25.6"
 directories = "6.0.0"
 xdg-user = "0.2.1"

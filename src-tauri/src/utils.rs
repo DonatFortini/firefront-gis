@@ -147,7 +147,7 @@ pub async fn compress_folder(
 
     let output = app_handle
         .shell()
-        .sidecar("7z")?
+        .sidecar("_7z")?
         .args(["a", &output_zip_path, "."])
         .current_dir(source_folder_path)
         .output()
@@ -179,7 +179,7 @@ pub async fn extract_files_by_name(
     let app_handle = get_handle().unwrap();
     let extract_output = app_handle
         .shell()
-        .sidecar("7z")?
+        .sidecar("_7z")?
         .args([
             "x",
             archive_path,
