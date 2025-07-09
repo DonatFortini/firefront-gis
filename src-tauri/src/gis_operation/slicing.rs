@@ -1,8 +1,5 @@
-use crate::utils::{
-    create_directory_if_not_exists, get_handle, get_project_bounding_box, projects_dir,
-};
+use crate::utils::{create_directory_if_not_exists, get_project_bounding_box, projects_dir};
 use image::{DynamicImage, GenericImageView};
-use tauri_plugin_shell::ShellExt;
 
 pub async fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), String> {
     let projects_dir_path = projects_dir();
@@ -94,42 +91,6 @@ async fn save_and_process_slice(
     cropped_ortho
         .save(&ortho_path)
         .map_err(|e| format!("Failed to save ORTHO slice: {e}"))?;
-
-    process_with_imagemagick(&veget_path, "VEGET").await?;
-    process_with_imagemagick(&ortho_path, "ORTHO").await?;
-
-    Ok(())
-}
-
-async fn process_with_imagemagick(image_path: &str, image_type: &str) -> Result<(), String> {
-    let app_handle = get_handle().unwrap();
-    let output_path = format!("{image_path}.processed.jpg");
-
-    let magick_output = app_handle
-        .shell()
-        .sidecar("magick")
-        .map_err(|e| format!("Failed to launch magick sidecar: {e}"))?
-        .args([
-            "convert",
-            image_path,
-            "-strip",
-            "-resize",
-            "800x800",
-            "-quality",
-            "90",
-            &output_path,
-        ])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run magick: {e}"))?;
-
-    if !magick_output.status.success() {
-        return Err(format!(
-            "Failed to process {} image with ImageMagick: {}",
-            image_type,
-            String::from_utf8_lossy(&magick_output.stderr)
-        ));
-    }
 
     Ok(())
 }

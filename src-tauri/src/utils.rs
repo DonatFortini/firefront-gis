@@ -9,6 +9,7 @@ use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::MutexGuard;
+use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
 use xdg_user;
 
@@ -58,6 +59,20 @@ impl BoundingBox {
 
     pub fn to_geometry(&self) -> Result<Geometry, gdal::errors::GdalError> {
         Geometry::from_wkt(&self.to_wkt())
+    }
+
+    pub fn intersects(&self, other: &BoundingBox) -> bool {
+        self.xmin < other.xmax
+            && self.xmax > other.xmin
+            && self.ymin < other.ymax
+            && self.ymax > other.ymin
+    }
+
+    pub fn contains(&self, other: &BoundingBox) -> bool {
+        self.xmin <= other.xmin
+            && self.xmax >= other.xmax
+            && self.ymin <= other.ymin
+            && self.ymax >= other.ymax
     }
 }
 
@@ -244,7 +259,6 @@ fn find_files_by_basename(
     Ok(())
 }
 
-/// Get list of previous projects using cross-platform directory listing
 pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn Error>> {
     let projects_path = projects_dir();
     let mut projects = HashMap::new();
@@ -340,7 +354,7 @@ pub async fn export_to_jpg(
             project_file_path,
             "-strip",
             "-quality",
-            "85",
+            "90",
             output_jpg_path,
         ])
         .output()
@@ -437,6 +451,13 @@ pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+pub fn emit_progress(message: &str) {
+    get_handle()
+        .unwrap()
+        .emit("progress-update", message)
+        .unwrap();
 }
 
 pub fn get_config() -> MutexGuard<'static, AppConfig> {

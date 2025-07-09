@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
-use tauri::{Emitter, command};
+use crate::utils::{emit_progress, get_handle};
+use tauri::command;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::fs;
 
@@ -34,12 +35,8 @@ use crate::{
 /// # Retourne
 ///
 /// * `Result<String, String>` - Chemin du dossier du projet créé ou un message d'erreur.
-pub async fn create_project_com(
-    app_handle: tauri::AppHandle,
-    name: String,
-    project_bb: BoundingBox,
-) -> Result<String, String> {
-    let _ = app_handle.emit("progress-update", "Recherche des fichiers");
+pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result<String, String> {
+    emit_progress("Recherche des fichiers");
 
     create_directory_if_not_exists("tmp")
         .map_err(|e| format!("Erreur lors de la création du dossier tmp: {e:?}"))?;
@@ -62,7 +59,7 @@ pub async fn create_project_com(
         .await
         .map_err(|e| e.to_string())?;
 
-    let _ = app_handle.emit("progress-update", "Téléchargement des données");
+    emit_progress("Téléchargement des données");
 
     let file_types = ["BDTOPO", "BDFORET", "RPG"];
     let total_downloads = urls.len();
@@ -78,12 +75,9 @@ pub async fn create_project_com(
             let url = &urls[url_index];
             download_count += 1;
 
-            let _ = app_handle.emit(
-                "progress-update",
-                format!(
-                    "Téléchargement des données|{file_type}|{download_count}/{total_downloads}"
-                ),
-            );
+            emit_progress(&format!(
+                "Téléchargement des données|{file_type}|{download_count}/{total_downloads}"
+            ));
 
             let cache_path = format!(
                 "{}/{}_{}.7z",
@@ -99,12 +93,14 @@ pub async fn create_project_com(
         }
     }
 
-    let _ = app_handle.emit("progress-update", "Initialisation du projet");
-    let project_folder = format!("{}/{}", projects_dir().to_string_lossy(), name);
+    emit_progress("Initialisation du projet");
+
+    let project_folder = format!("{}/{name}", projects_dir().to_string_lossy());
     let project_file_path = format!("{project_folder}/{name}.tiff");
 
     if std::path::Path::new(&project_file_path).exists() {
-        let should_overwrite = app_handle
+        let should_overwrite = get_handle()
+            .unwrap()
             .dialog()
             .message("project_exists")
             .title("Project already exists")
@@ -118,23 +114,19 @@ pub async fn create_project_com(
         std::fs::remove_dir_all(&project_folder).unwrap();
     }
 
-    let _ = app_handle.emit(
-        "progress-update",
-        "Initialisation du projet|Création des dossiers|1/2",
-    );
+    emit_progress("Initialisation du projet|Création des dossiers|1/2");
+
     std::fs::create_dir_all(&project_folder).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{project_folder}/resources")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{project_folder}/slices")).map_err(|e| e.to_string())?;
 
-    let _ = app_handle.emit(
-        "progress-update",
-        "Initialisation du projet|Configuration du projet|2/2",
-    );
+    emit_progress("Initialisation du projet|Configuration du projet|2/2");
+
     if let Err(e) = create_project(&project_file_path, &project_bb) {
         return Err(format!("Erreur lors de la création du projet: {e:?}"));
     }
 
-    let _ = app_handle.emit("progress-update", "Préparation des Couches");
+    emit_progress("Préparation des Couches");
 
     let mut regional_gpkgs: Vec<String> = Vec::new();
     let mut vegetation_gpkgs: Vec<String> = Vec::new();
@@ -143,26 +135,18 @@ pub async fn create_project_com(
 
     let total_regions = region_codes.len();
     for (idx, code) in region_codes.iter().enumerate() {
-        let _ = app_handle.emit(
-            "progress-update",
-            format!(
-                "Préparation des Couches|Traitement de la région {}|{}/{}",
-                code,
-                idx + 1,
-                total_regions
-            ),
-        );
+        emit_progress(&format!(
+            "Préparation des Couches|Traitement de la région {code}|{}/{total_regions}",
+            idx + 1
+        ));
 
-        if idx > 0 {
-            if let Err(e) = clean_tmp_except_gpkg() {
-                return Err(format!(
-                    "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
-                ));
-            }
+        if let Err(e) = clean_tmp_except_gpkg() {
+            return Err(format!(
+                "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
+            ));
         }
 
-        let (r_gpkg, v_gpkg, rp_gpkg, t_gpkg) =
-            prepare_layers(&app_handle, &project_bb, code).await?;
+        let (r_gpkg, v_gpkg, rp_gpkg, t_gpkg) = prepare_layers(&project_bb, code).await?;
 
         regional_gpkgs.push(r_gpkg);
         vegetation_gpkgs.push(v_gpkg);
@@ -182,58 +166,43 @@ pub async fn create_project_com(
     create_directory_if_not_exists("tmp")
         .map_err(|e| format!("Erreur lors de la création du dossier tmp: {e:?}"))?;
 
-    let _ = app_handle.emit(
-        "progress-update",
-        "Fusion des données|Fusion des régions|1/4",
-    );
+    emit_progress("Fusion des données|Fusion des régions|1/4");
 
     let regional_merged_gpkg = format!("{project_folder}/resources/{name}.gpkg");
     let vegetation_merged_gpkg = format!("{project_folder}/resources/FORMATION_VEGETALE.gpkg");
     let rpg_merged_gpkg = format!("{project_folder}/resources/PARCELLES_GRAPHIQUES.gpkg");
 
     if region_codes.len() > 1 {
-        let _ = app_handle.emit(
-            "progress-update",
-            "Fusion des données|Fusion des couches régionales|1/4",
-        );
+        emit_progress("Fusion des données|Fusion des couches régionales|1/4");
+
         if let Err(e) = fusion_datasets(&regional_gpkgs, &regional_merged_gpkg) {
             return Err(format!(
                 "Erreur lors de la fusion des couches régionales: {e:?}"
             ));
         }
 
-        let _ = app_handle.emit(
-            "progress-update",
-            "Fusion des données|Fusion des couches de végétation|2/4",
-        );
+        emit_progress("Fusion des données|Fusion des couches de végétation|2/4");
+
         if let Err(e) = fusion_datasets(&vegetation_gpkgs, &vegetation_merged_gpkg) {
             return Err(format!(
                 "Erreur lors de la fusion des couches de végétation: {e:?}"
             ));
         }
 
-        let _ = app_handle.emit(
-            "progress-update",
-            "Fusion des données|Fusion des couches RPG|3/4",
-        );
+        emit_progress("Fusion des données|Fusion des couches RPG|3/4");
+
         if let Err(e) = fusion_datasets(&rpg_gpkgs, &rpg_merged_gpkg) {
             return Err(format!("Erreur lors de la fusion des couches RPG: {e:?}"));
         }
 
-        let _ = app_handle.emit(
-            "progress-update",
-            "Fusion des données|Fusion des couches topographiques|4/4",
-        );
+        emit_progress("Fusion des données|Fusion des couches topographiques|4/4");
 
         let total_topo_layers = topo_gpkgs.len();
         let mut topo_count = 1;
         for (layer_name, paths) in &topo_gpkgs {
-            let _ = app_handle.emit(
-                "progress-update",
-                format!(
-                    "Fusion des données|Fusion de {layer_name}|{topo_count}/{total_topo_layers}"
-                ),
-            );
+            emit_progress(&format!(
+                "Fusion des données|Fusion de {layer_name}|{topo_count}/{total_topo_layers}"
+            ));
             let topo_merged_path = format!("{project_folder}/resources/{layer_name}.gpkg");
             if let Err(e) = fusion_datasets(paths, &topo_merged_path) {
                 return Err(format!(
@@ -243,10 +212,7 @@ pub async fn create_project_com(
             topo_count += 1;
         }
     } else {
-        let _ = app_handle.emit(
-            "progress-update",
-            "Fusion des données|Copie des fichiers (une seule région)|1/1",
-        );
+        emit_progress("Fusion des données|Copie des fichiers (une seule région)|1/1");
 
         if let Err(e) = fs::rename(&regional_gpkgs[0], &regional_merged_gpkg).await {
             return Err(format!(
@@ -282,13 +248,14 @@ pub async fn create_project_com(
         ));
     }
 
-    let _ = app_handle.emit("progress-update", "Ajout des Couches");
-    if let Err(e) = add_layers(&app_handle, &project_folder, &project_file_path, &name) {
+    emit_progress("Ajout des Couches");
+    if let Err(e) = add_layers(&project_file_path) {
         return Err(format!("Erreur lors de l'ajout des couches: {e:?}"));
     }
 
-    let _ = app_handle.emit("progress-update", "Finalisation");
-    let _ = app_handle.emit("progress-update", "Finalisation|Export en JPEG|1/2");
+    emit_progress("Finalisation");
+    emit_progress("Finalisation|Export en JPEG|1/2");
+
     if let Err(e) = export_to_jpg(
         &project_file_path,
         format!("{project_folder}/{name}_VEGET.jpeg").as_str(),
@@ -298,10 +265,8 @@ pub async fn create_project_com(
         return Err(format!("Erreur lors de l'exportation de l'image: {e:?}"));
     }
 
-    let _ = app_handle.emit(
-        "progress-update",
-        "Finalisation|Téléchargement d'orthophoto|2/2",
-    );
+    emit_progress("Finalisation|Téléchargement d'orthophoto|2/2");
+
     if let Err(e) = download_satellite_jpeg(
         format!("{project_folder}/{name}_ORTHO.jpeg").as_str(),
         &project_bb,
@@ -313,7 +278,8 @@ pub async fn create_project_com(
         ));
     }
 
-    let _ = app_handle.emit("progress-update", "Nettoyage");
+    emit_progress("Nettoyage");
+
     fs::remove_dir_all("tmp")
         .await
         .map_err(|e| format!("Erreur lors de la suppression du dossier tmp: {e:?}"))?;
@@ -322,7 +288,7 @@ pub async fn create_project_com(
         .await
         .map_err(|e| format!("Erreur lors de la création du dossier tmp: {e:?}"))?;
 
-    let _ = app_handle.emit("progress-update", "Projet créé avec succès");
+    emit_progress("Projet créé avec succès");
 
     Ok(project_folder)
 }

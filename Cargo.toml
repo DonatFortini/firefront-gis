@@ -8,12 +8,17 @@ edition = "2024"
 yew = { version = "0.21", features = ["csr"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["HtmlSelectElement"] }
+web-sys = { version = "0.3", features = [
+    "HtmlSelectElement",
+    "HtmlImageElement",
+] }
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1.7"
 serde_json = "1.0.140"
+
+gloo-timers = "0.3.0"
 gloo-utils = "0.2.0"
 
 [workspace]

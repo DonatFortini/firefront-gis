@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use tauri::Emitter;
+
 use tauri_plugin_shell::ShellExt;
 
 use super::processing::{apply_overlay, rasterize_layer};
@@ -12,8 +12,8 @@ use super::regions::create_region_geojson;
 use super::{clip_to_bb, convert_to_gpkg};
 
 use crate::utils::{
-    BoundingBox, cache_dir, create_directory_if_not_exists, extract_files_by_name, get_handle,
-    resolution, temp_dir,
+    BoundingBox, cache_dir, create_directory_if_not_exists, emit_progress, extract_files_by_name,
+    get_handle, resolution, temp_dir,
 };
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
@@ -29,17 +29,13 @@ use crate::utils::{
 ///
 /// * `Result<(String, String, String, HashMap<String, Vec<String>>), String>` - Un tuple contenant les chemins vers les fichiers GPKG pour la région, la végétation, le RPG et les couches topographiques
 pub async fn prepare_layers(
-    app_handle: &tauri::AppHandle,
     project_bb: &BoundingBox,
     code: &str,
 ) -> Result<(String, String, String, HashMap<String, Vec<String>>), String> {
     let cache_folder_path = cache_dir().to_string_lossy().to_string();
     let temp_dir = temp_dir().to_string_lossy().to_string();
 
-    let _ = app_handle.emit(
-        "progress-update",
-        "Préparation des Couches|Préparation de l'étendue régionale|1/4",
-    );
+    emit_progress("Préparation des Couches|Préparation de l'étendue régionale|1/4");
 
     let regional_geojson_path = format!("{temp_dir}/{code}.geojson");
     create_region_geojson(code, &regional_geojson_path).unwrap();
@@ -47,8 +43,8 @@ pub async fn prepare_layers(
     let temp_regional_gpkg = format!("{temp_dir}/{code}.gpkg");
     let regional_gpkg = format!("{temp_dir}/{code}_region.gpkg");
 
-    let _ = convert_to_gpkg(&regional_geojson_path, &temp_regional_gpkg);
-    let _ = clip_to_bb(&temp_regional_gpkg, &regional_gpkg, project_bb);
+    convert_to_gpkg(&regional_geojson_path, &temp_regional_gpkg).unwrap();
+    clip_to_bb(&temp_regional_gpkg, &regional_gpkg, project_bb).unwrap();
 
     let mut layers: HashMap<String, Vec<&str>> = HashMap::new();
     layers.insert(format!("BDFORET_{code}.7z"), vec!["FORMATION_VEGETALE"]);
@@ -90,29 +86,19 @@ pub async fn prepare_layers(
             "Inconnu"
         };
 
-        let _ = app_handle.emit(
-            "progress-update",
-            format!(
-                "Préparation des Couches|Préparation des couches {}|{}/{}",
-                layer_type,
-                layer_index,
-                total_archives + 1
-            ),
-        );
+        emit_progress(&format!(
+            "Préparation des Couches|Préparation des couches {layer_type}|{layer_index}/{}",
+            total_archives + 1
+        ));
 
         let archive_path = format!("{cache_folder_path}/{archive}");
 
         let total_files = files.len();
         for (file_index, file) in files.iter().enumerate() {
-            let _ = app_handle.emit(
-                "progress-update",
-                format!(
-                    "Préparation des Couches|Extraction de {}|{}/{}",
-                    file,
-                    file_index + 1,
-                    total_files
-                ),
-            );
+            emit_progress(&format!(
+                "Préparation des Couches|Extraction de {file}|{}/{total_files}",
+                file_index + 1
+            ));
 
             extract_files_by_name(&archive_path, file, &temp_dir).await.map_err(|e| {
                 format!(
@@ -124,15 +110,10 @@ pub async fn prepare_layers(
             let temp_gpkg = format!("{temp_dir}/{file}.gpkg");
             let output_gpkg = format!("{temp_dir}/{code}_{file}.gpkg");
 
-            let _ = app_handle.emit(
-                "progress-update",
-                format!(
-                    "Préparation des Couches|Conversion de {}|{}/{}",
-                    file,
-                    file_index + 1,
-                    total_files
-                ),
-            );
+            emit_progress(&format!(
+                "Préparation des Couches|Conversion de {file}|{}/{total_files}",
+                file_index + 1
+            ));
 
             if let Err(e) = convert_to_gpkg(&temp_file, &temp_gpkg) {
                 return Err(format!(
@@ -140,15 +121,10 @@ pub async fn prepare_layers(
                 ));
             }
 
-            let _ = app_handle.emit(
-                "progress-update",
-                format!(
-                    "Préparation des Couches|Découpage de {}|{}/{}",
-                    file,
-                    file_index + 1,
-                    total_files
-                ),
-            );
+            emit_progress(&format!(
+                "Préparation des Couches|Découpage de {file}|{}/{total_files}",
+                file_index + 1
+            ));
 
             if let Err(e) = clip_to_bb(&temp_gpkg, &output_gpkg, project_bb) {
                 return Err(format!(
@@ -156,13 +132,11 @@ pub async fn prepare_layers(
                 ));
             }
 
-            // Stocker les chemins des fichiers GPKG selon leur type
             if file == &"FORMATION_VEGETALE" {
                 vegetation_gpkg = output_gpkg.clone();
             } else if file == &"PARCELLES_GRAPHIQUES" {
                 rpg_gpkg = output_gpkg.clone();
             } else {
-                // Pour les couches topo, on les stocke par nom de fichier
                 topo_gpkgs
                     .entry(file.to_string())
                     .or_default()
@@ -615,16 +589,20 @@ pub fn add_topo_layer(
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
-pub fn add_layers(
-    app_handle: &tauri::AppHandle,
-    project_folder: &str,
-    project_file_path: &str,
-    project_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = app_handle.emit(
-        "progress-update",
-        "Ajout des Couches|Ajout de la couche régionale|1/4",
-    );
+pub fn add_layers(project_file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    emit_progress("Ajout des Couches|Ajout de la couche régionale|1/4");
+
+    let project_file_path_obj = Path::new(project_file_path);
+    let project_folder = project_file_path_obj
+        .parent()
+        .ok_or("Invalid project_file_path: no parent directory")?
+        .to_string_lossy()
+        .to_string();
+    let project_name = project_file_path_obj
+        .file_stem()
+        .ok_or("Invalid project_file_path: no file stem")?
+        .to_string_lossy()
+        .to_string();
 
     if let Err(e) = add_regional_layer(
         project_file_path,
@@ -667,24 +645,16 @@ pub fn add_layers(
             _ => "Inconnu",
         };
 
-        let _ = app_handle.emit(
-            "progress-update",
-            format!(
-                "Ajout des Couches|Ajout des couches {layer_type}|{layer_index}/{total_layer_types}"
-            ),
-        );
+        emit_progress(&format!(
+            "Ajout des Couches|Ajout des couches {layer_type}|{layer_index}/{total_layer_types}"
+        ));
 
         let total_files = value.len();
         for (file_index, file) in value.iter().enumerate() {
-            let _ = app_handle.emit(
-                "progress-update",
-                format!(
-                    "Ajout des Couches|Ajout de {}|{}/{}",
-                    file,
-                    file_index + 1,
-                    total_files
-                ),
-            );
+            emit_progress(&format!(
+                "Ajout des Couches|Ajout de {file}|{}/{total_files}",
+                file_index + 1
+            ));
 
             let layer_path = format!("{project_folder}/resources/{file}.gpkg");
             match key {
@@ -852,33 +822,6 @@ pub async fn download_satellite_jpeg(
         )
         .into());
     }
-
-    // let input_staellite = image_convert::ImageResource::from_path(temp_satellite.clone());
-
-    // let mut output_temp = image_convert::ImageResource::from_path(temp_jpg.clone());
-
-    // let config = image_convert::JPGConfig {
-    //     strip_metadata: true,
-    //     width: width as u16,
-    //     height: height as u16,
-    //     crop: None,
-    //     shrink_only: false,
-    //     sharpen: -1.0,
-    //     respect_orientation: false,
-    //     force_to_chroma_quartered: false,
-    //     quality: 90,
-    //     background_color: None,
-    //     ppi: None,
-    // };
-
-    // let magick_status = image_convert::to_jpg(&mut output_temp, &input_staellite, &config);
-
-    // if magick_status.is_err() {
-    //     return Err(format!(
-    //         "Erreur lors de la conversion de l'image satellite en JPEG: {magick_status:?}"
-    //     )
-    //     .into());
-    // }
 
     if Path::new(&temp_jpg).exists() {
         std::fs::rename(temp_jpg, output_jpg_path)?;
