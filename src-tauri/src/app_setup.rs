@@ -1,5 +1,6 @@
 use crate::gis_operation::regions::build_regions_graph;
 use crate::utils::{OUTPUT_DIR, create_directory_if_not_exists};
+use futures_util::future::ok;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -195,5 +196,52 @@ pub fn verify_dependency(config: &mut AppConfig) -> Result<(), DependencyError> 
         println!("{gdal_cmd} path set to: {path}");
     }
 
+    Ok(())
+}
+
+pub fn install_gdal_unix() -> Result<(), String> {
+    let installers = [
+        (
+            "apt-get",
+            &[
+                "sudo",
+                "apt-get",
+                "install",
+                "-y",
+                "gdal-bin",
+                "libgdal-dev",
+            ][..],
+        ),
+        ("dnf", &["sudo", "dnf", "install", "-y", "gdal"][..]),
+        ("pacman", &["sudo", "pacman", "-S", "gdal"][..]),
+        ("brew", &["brew", "install", "gdal"][..]),
+    ];
+
+    for (pm, cmd) in installers.iter() {
+        if Command::new("which")
+            .arg(pm)
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            let output = Command::new(cmd[0])
+                .args(&cmd[1..])
+                .output()
+                .map_err(|e| format!("Failed to install GDAL with {pm}: {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "Failed to install GDAL with {pm}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            return Ok(());
+        }
+    }
+
+    Err("No supported package manager found (apt-get, dnf, pacman, brew). Please install GDAL manually.".to_string())
+}
+
+fn install_gdal_windows() -> Result<(), String> {
+    let installer_url = "
+https://download.osgeo.org/gdal/win64/v3.4.0/gdal-3.4.0-x64-core.msi";
     Ok(())
 }
