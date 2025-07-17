@@ -102,8 +102,8 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
         let should_overwrite = get_handle()
             .unwrap()
             .dialog()
-            .message("project_exists")
-            .title("Project already exists")
+            .message("Voulez-vous écraser le projet existant ?")
+            .title("Projet dejà existant")
             .buttons(MessageDialogButtons::YesNo)
             .blocking_show();
 
