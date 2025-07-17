@@ -1,6 +1,5 @@
-use std::process::Command;
-
 use gdal::{Dataset, DriverManager};
+use std::process::Command;
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -182,11 +181,19 @@ where
         )?;
     }
 
-    output_dataset.close().unwrap();
-    overlay_raster.close().unwrap();
-    project.close().unwrap();
+    drop(output_dataset);
+    drop(overlay_raster);
+    drop(project);
 
-    std::fs::rename(output_file, project_file_path)?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(output_file, project_file_path)?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::fs::copy(output_file, project_file_path)?;
+        std::fs::remove_file(output_file)?;
+    }
 
     Ok(())
 }
