@@ -1,11 +1,11 @@
-use app_setup::initialize_app;
 use commands::{
     clear_cache, create_project_com, delete_project, export, get_os, get_projects, get_settings,
     save_settings,
 };
+use config::initialize_app;
 
-pub mod app_setup;
 pub mod commands;
+pub mod config;
 pub mod gis_operation;
 pub mod utils;
 pub mod web_request;

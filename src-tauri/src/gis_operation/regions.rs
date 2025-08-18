@@ -13,7 +13,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-use crate::utils::{BoundingBox, get_config};
+use crate::{config::get_config, utils::BoundingBox};
 
 struct GeometryDef {
     wkt: String,
@@ -228,7 +228,7 @@ pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Er
 }
 
 fn load_regions_graph() -> Result<HashMap<String, Region>, Box<dyn Error>> {
-    let graph_path = get_config().regions_graph_path();
+    let graph_path = get_config(|config| config.regions_graph_path());
     println!("Loading regions graph from: {}", graph_path.display());
     if !Path::new(&graph_path).exists() {
         return Err("Regions graph file not found".into());

@@ -1,4 +1,4 @@
-use crate::app_setup::{AppConfig, CONFIG};
+use crate::config::get_config;
 use gdal::vector::Geometry;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,6 @@ use std::error::Error;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::MutexGuard;
 use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
 
@@ -451,44 +450,36 @@ pub fn emit_progress(message: &str) {
         .unwrap();
 }
 
-pub fn get_config() -> MutexGuard<'static, AppConfig> {
-    CONFIG.lock().unwrap()
-}
-
-pub fn get_config_mut() -> MutexGuard<'static, AppConfig> {
-    CONFIG.lock().unwrap()
-}
-
 pub fn cache_dir() -> PathBuf {
-    get_config().cache_dir.clone()
+    get_config(|config| config.cache_dir.clone())
 }
 
 pub fn projects_dir() -> PathBuf {
-    get_config().projects_dir.clone()
+    get_config(|config| config.projects_dir.clone())
 }
 
 pub fn temp_dir() -> PathBuf {
-    get_config().temp_dir.clone()
+    get_config(|config| config.temp_dir.clone())
 }
 
 pub fn resource_dir() -> PathBuf {
-    get_config().resource_dir.clone()
+    get_config(|config| config.resource_dir.clone())
 }
 
 pub fn output_location() -> PathBuf {
-    get_config().output_location.clone()
+    get_config(|config| config.output_location.clone())
 }
 
 pub fn resolution() -> f64 {
-    get_config().resolution
+    get_config(|config| config.resolution)
 }
 
 pub fn slice_factor() -> u32 {
-    get_config().slice_factor
+    get_config(|config| config.slice_factor)
 }
 
 pub fn get_handle() -> Option<tauri::AppHandle> {
-    get_config().handle.clone()
+    get_config(|config| config.handle.clone())
 }
 
 pub fn in_cache_dir<P: AsRef<Path>>(path: P) -> PathBuf {
@@ -513,8 +504,4 @@ pub fn project_dir(project_name: &str) -> PathBuf {
 
 pub fn in_project_dir(project_name: &str, path: &str) -> PathBuf {
     project_dir(project_name).join(path)
-}
-
-pub fn save_config() -> Result<(), Box<dyn std::error::Error>> {
-    get_config().save()
 }

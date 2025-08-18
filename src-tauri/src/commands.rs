@@ -1,12 +1,15 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::utils::{emit_progress, get_handle};
+use crate::{
+    config::get_config,
+    utils::{emit_progress, get_handle},
+};
 use tauri::command;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::fs;
 
 use crate::{
-    app_setup,
+    config,
     gis_operation::{
         create_project, fusion_datasets,
         layers::{add_layers, download_satellite_jpeg, prepare_layers},
@@ -363,12 +366,13 @@ pub async fn delete_project(project_name: &str) -> Result<String, String> {
 /// # Retourne
 /// - `Result<serde_json::Value, String>` : Un objet JSON contenant les paramètres de configuration ou une erreur.
 pub fn get_settings() -> Result<serde_json::Value, String> {
-    let config = app_setup::CONFIG.lock().unwrap();
-    let output_location = config.output_location.to_string_lossy().to_string();
-    let gdal_path = config
-        .gdal_path
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+    let output_location = get_config(|config| config.output_location.to_string_lossy().to_string());
+    let gdal_path = get_config(|config| {
+        config
+            .gdal_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+    });
 
     Ok(serde_json::json!({
         "output_location": output_location,
@@ -388,8 +392,15 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
 ///
 /// * `String` : Un message de succès ou d'erreur.
 pub fn save_settings(output_location: Option<String>, gdal_path: Option<String>) -> String {
-    let mut config = app_setup::CONFIG.lock().unwrap();
-    match config.update(output_location, gdal_path) {
+    match config::update_config(|config| {
+        if let Some(output_location) = output_location {
+            config.output_location = std::path::PathBuf::from(output_location);
+        }
+        if let Some(gdal_path) = gdal_path {
+            config.gdal_path = Some(std::path::PathBuf::from(gdal_path));
+        }
+        Ok(())
+    }) {
         Ok(_) => "Paramètres sauvegardés avec succès".to_string(),
         Err(e) => {
             format!("Échec de sauvegarde des paramètres: {e}")
