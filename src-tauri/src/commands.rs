@@ -10,6 +10,7 @@ use tokio::fs;
 
 use crate::{
     config,
+    fetch_resources::{download_shp_file, get_shp_file_urls},
     gis_operation::{
         create_project, fusion_datasets,
         layers::{add_layers, download_satellite_jpeg, prepare_layers},
@@ -19,7 +20,6 @@ use crate::{
         BoundingBox, cache_dir, clean_tmp_except_gpkg, create_directory_if_not_exists,
         export_project, export_to_jpg, get_operating_system, get_previous_projects, projects_dir,
     },
-    web_request::{download_shp_file, get_shp_file_urls},
 };
 
 #[command(rename_all = "snake_case")]

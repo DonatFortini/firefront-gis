@@ -46,7 +46,8 @@
     "externalBin": [
       "binaries/7z/_7z",
       "binaries/magick/magick",
-      "binaries/gdal/gdalinfo"
+      "binaries/gdal/gdalinfo",
+      "binaries/gdal/ogrinfo"
     ]
   }
 }

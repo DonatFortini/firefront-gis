@@ -6,9 +6,9 @@ use config::initialize_app;
 
 pub mod commands;
 pub mod config;
+pub mod fetch_resources;
 pub mod gis_operation;
 pub mod utils;
-pub mod web_request;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

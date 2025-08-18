@@ -13,7 +13,7 @@ pub async fn slice_images(project_name: &str, slice_factor: u32) -> Result<(), S
     let veget_image = load_image(&format!("{project_path}{project_name}_VEGET.jpeg"), "VEGET")?;
     let ortho_image = load_image(&format!("{project_path}{project_name}_ORTHO.jpeg"), "ORTHO")?;
 
-    let project_coordinates = get_project_bounding_box(project_name)?;
+    let project_coordinates = get_project_bounding_box(project_name).await.unwrap();
     let (base_x, base_y) = (
         (project_coordinates.xmin / 1000.0) as u32,
         (project_coordinates.ymin / 1000.0) as u32,

@@ -5,11 +5,13 @@ use firefront_gis_lib::{
     utils::{get_project_bounding_box, projects_dir},
 };
 
-#[test]
-fn test_project_bounding_box() {
+#[tokio::test]
+async fn test_project_bounding_box() {
     let project_name = "porto-vecchio";
 
-    let bounding_box = get_project_bounding_box(project_name).expect("Failed to get bounding box");
+    let bounding_box = get_project_bounding_box(project_name)
+        .await
+        .expect("Failed to get bounding box");
 
     assert_eq!(bounding_box.xmin, 1210000.0, "Xmin mismatch");
     assert_eq!(bounding_box.ymax, 6095000.0, "Ymax mismatch");

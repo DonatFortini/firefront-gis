@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
 
@@ -363,18 +362,24 @@ pub async fn export_to_jpg(
     Ok(())
 }
 
-pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, String> {
+pub async fn get_project_bounding_box(
+    project_name: &str,
+) -> Result<BoundingBox, Box<dyn std::error::Error>> {
     let project_path = format!("{}/{}/", projects_dir().to_string_lossy(), project_name);
-    // FIXME : add the cross-platform support
-    let output = Command::new("gdalinfo")
+    let handle = get_handle().unwrap();
+
+    let output = handle
+        .shell()
+        .sidecar("gdalinfo")?
         .args([
             format!("{project_path}{project_name}.tiff"),
             "-json".to_owned(),
         ])
-        .output();
+        .output()
+        .await?;
 
-    let json_output: Value = serde_json::from_slice(&output.unwrap().stdout)
-        .map_err(|e| format!("Failed to parse JSON: {e}"))?;
+    let json_output: Value =
+        serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     let corner_coordinates = json_output["cornerCoordinates"].as_object().unwrap();
 
@@ -386,13 +391,17 @@ pub fn get_project_bounding_box(project_name: &str) -> Result<BoundingBox, Strin
     })
 }
 
-pub fn get_geojson_bounding_box(
+pub async fn get_geojson_bounding_box(
     file_path: &str,
 ) -> Result<BoundingBox, Box<dyn std::error::Error>> {
-    // FIXME : add the cross-platform support
-    let output = Command::new("ogrinfo")
+    let handle = get_handle().unwrap();
+    let output = handle
+        .shell()
+        .sidecar("ogrinfo")?
         .args(["-so", "-al", file_path])
-        .output()?;
+        .output()
+        .await?;
+
     let info_str = String::from_utf8(output.stdout)?;
 
     let extent_pattern = r"Extent:\s*\(([\d.-]+),\s*([\d.-]+)\)\s*-\s*\(([\d.-]+),\s*([\d.-]+)\)";
