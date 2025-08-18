@@ -165,23 +165,23 @@ pub fn project(props: &ProjectProps) -> Html {
                 let args = ExportArgs {
                     project_name: project_name.clone(),
                 };
-                if let Ok(serialized_args) = serde_wasm_bindgen::to_value(&args) {
-                    if let Some(result) = invoke("export", serialized_args).await.as_string() {
-                        match result.as_str() {
-                            "success" => {
-                                web_sys::window()
-                                    .unwrap()
-                                    .alert_with_message("Exportation réussie")
-                                    .unwrap();
-                            }
-                            "error" => {
-                                web_sys::window()
-                                    .unwrap()
-                                    .alert_with_message("Erreur lors de l'exportation")
-                                    .unwrap();
-                            }
-                            _ => {}
+                if let Ok(serialized_args) = serde_wasm_bindgen::to_value(&args)
+                    && let Some(result) = invoke("export", serialized_args).await.as_string()
+                {
+                    match result.as_str() {
+                        "success" => {
+                            web_sys::window()
+                                .unwrap()
+                                .alert_with_message("Exportation réussie")
+                                .unwrap();
                         }
+                        "error" => {
+                            web_sys::window()
+                                .unwrap()
+                                .alert_with_message("Erreur lors de l'exportation")
+                                .unwrap();
+                        }
+                        _ => {}
                     }
                 }
             });

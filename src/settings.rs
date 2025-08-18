@@ -68,12 +68,11 @@ pub fn settings_component() -> Html {
                                 output_location.set(output.to_string());
                             }
 
-                            if let Some(gdal) = settings.get("gdal_path") {
-                                if !gdal.is_null() {
-                                    if let Some(path) = gdal.as_str() {
-                                        gdal_path.set(path.to_string());
-                                    }
-                                }
+                            if let Some(gdal) = settings.get("gdal_path")
+                                && !gdal.is_null()
+                                && let Some(path) = gdal.as_str()
+                            {
+                                gdal_path.set(path.to_string());
                             }
 
                             settings_loaded.set(true);
@@ -106,10 +105,10 @@ pub fn settings_component() -> Html {
                     title: String::from("Sélectionner un dossier de sortie"),
                 };
 
-                if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
-                    if let Some(selected_path) = open(args).await.as_string() {
-                        output_location.set(selected_path);
-                    }
+                if let Ok(args) = serde_wasm_bindgen::to_value(&options)
+                    && let Some(selected_path) = open(args).await.as_string()
+                {
+                    output_location.set(selected_path);
                 }
             });
         })
@@ -130,10 +129,10 @@ pub fn settings_component() -> Html {
                     title: String::from("Sélectionner l'exécutable GDAL"),
                 };
 
-                if let Ok(args) = serde_wasm_bindgen::to_value(&options) {
-                    if let Some(selected_path) = open(args).await.as_string() {
-                        gdal_path.set(selected_path);
-                    }
+                if let Ok(args) = serde_wasm_bindgen::to_value(&options)
+                    && let Some(selected_path) = open(args).await.as_string()
+                {
+                    gdal_path.set(selected_path);
                 }
             });
         })

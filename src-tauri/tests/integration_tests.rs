@@ -168,12 +168,11 @@ async fn test_end_to_end_workflow() {
     for entry in fs::read_dir(test_dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
-        if path.is_file() {
-            if let Some(extension) = path.extension() {
-                if extension != "7z" {
-                    fs::remove_file(path).unwrap();
-                }
-            }
+        if path.is_file()
+            && let Some(extension) = path.extension()
+            && extension != "7z"
+        {
+            fs::remove_file(path).unwrap();
         }
     }
     fs::remove_dir_all("tmp").unwrap();

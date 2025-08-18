@@ -11,7 +11,6 @@ use std::process::Command;
 use std::sync::MutexGuard;
 use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
-use xdg_user;
 
 use crate::gis_operation::slicing::slice_images;
 
@@ -116,18 +115,12 @@ lazy_static! {
         ("06", vec!["976"]),
     ]);
     pub static ref OUTPUT_DIR: std::sync::Mutex<PathBuf> = {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let output_dir = directories::UserDirs::new()
             .unwrap()
             .download_dir()
             .expect("Failed to get download directory")
             .to_path_buf();
-        #[cfg(target_os = "linux")]
-        let output_dir = xdg_user::UserDirs::new()
-            .unwrap()
-            .downloads()
-            .expect("Failed to get downloads directory")
-            .to_path_buf();
+
         std::sync::Mutex::new(output_dir)
     };
 }
@@ -245,10 +238,10 @@ fn find_files_by_basename(
             let path = entry?.path();
 
             if path.is_file() {
-                if let Some(file_stem) = path.file_stem() {
-                    if file_stem.to_string_lossy() == target_basename {
-                        result.push(path);
-                    }
+                if let Some(file_stem) = path.file_stem()
+                    && file_stem.to_string_lossy() == target_basename
+                {
+                    result.push(path);
                 }
             } else if path.is_dir() {
                 find_files_by_basename(&path, target_basename, result)?;
@@ -271,21 +264,19 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_dir() {
-            if let Some(project_name) = path.file_name().and_then(|n| n.to_str()) {
-                if project_name != "cache" {
-                    let project_path = project_dir(project_name);
-                    let preview_image_path =
-                        project_path.join(format!("{project_name}_ORTHO.jpeg"));
-                    projects.insert(
-                        project_name.to_string(),
-                        vec![
-                            preview_image_path.to_string_lossy().to_string(),
-                            project_path.to_string_lossy().to_string(),
-                        ],
-                    );
-                }
-            }
+        if path.is_dir()
+            && let Some(project_name) = path.file_name().and_then(|n| n.to_str())
+            && project_name != "cache"
+        {
+            let project_path = project_dir(project_name);
+            let preview_image_path = project_path.join(format!("{project_name}_ORTHO.jpeg"));
+            projects.insert(
+                project_name.to_string(),
+                vec![
+                    preview_image_path.to_string_lossy().to_string(),
+                    project_path.to_string_lossy().to_string(),
+                ],
+            );
         }
     }
 

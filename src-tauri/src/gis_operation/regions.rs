@@ -130,13 +130,13 @@ impl Region {
 ///
 /// * `Result<bool, Box<dyn Error>>` - Retourne `true` si le graphe a été construit ou chargé avec succès.
 pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Error>> {
-    if let Some(path) = &output_file {
-        if Path::new(path).exists() {
-            println!("Loading regions graph from cache file: {path}");
-            let json_str = fs::read_to_string(path)?;
-            let _: HashMap<String, Region> = serde_json::from_str(&json_str)?;
-            return Ok(true);
-        }
+    if let Some(path) = &output_file
+        && Path::new(path).exists()
+    {
+        println!("Loading regions graph from cache file: {path}");
+        let json_str = fs::read_to_string(path)?;
+        let _: HashMap<String, Region> = serde_json::from_str(&json_str)?;
+        return Ok(true);
     }
 
     let binding = current_dir()?.join("resources/regions.geojson");
