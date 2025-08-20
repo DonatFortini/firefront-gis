@@ -47,7 +47,10 @@
       "binaries/7z/_7z",
       "binaries/magick/magick",
       "binaries/gdal/gdalinfo",
-      "binaries/gdal/ogrinfo"
+      "binaries/gdal/ogrinfo",
+      "binaries/gdal/gdal_rasterize",
+      "binaries/gdal/ogr2ogr",
+      "binaries/gdal/gdal_translate"
     ]
   }
 }

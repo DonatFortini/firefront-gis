@@ -3,6 +3,7 @@ use commands::{
     save_settings,
 };
 use config::initialize_app;
+use tauri::Manager;
 
 pub mod commands;
 pub mod config;
@@ -17,6 +18,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle();
+            let res_dir = app_handle
+                .path()
+                .resolve("resources", tauri::path::BaseDirectory::Resource)?;
+            println!("Resource directory: {:?}", res_dir);
+            unsafe {
+                std::env::set_var("PROJ_LIB", res_dir.join("proj").to_str().unwrap());
+                std::env::set_var("GDAL_DATA", res_dir.join("gdal").to_str().unwrap());
+            }
             match initialize_app(app_handle) {
                 Ok(_) => {
                     println!("Application setup completed successfully");

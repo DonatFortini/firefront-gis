@@ -1,8 +1,7 @@
-use std::process::Command;
-
 use gdal::{DriverManager, spatial_ref::SpatialRef};
+use tauri_plugin_shell::ShellExt;
 
-use crate::utils::{BoundingBox, resolution};
+use crate::utils::{BoundingBox, get_handle, resolution};
 
 pub mod layers;
 pub mod processing;
@@ -89,15 +88,18 @@ pub fn create_project(
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si la conversion a réussi ou échoué
-pub fn convert_to_gpkg(
+pub async fn convert_to_gpkg(
     input_file: &str,
     output_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = std::env::current_dir()?;
     let input_file_path = current_dir.join(input_file);
     let output_gpkg_path = current_dir.join(output_gpkg);
-    // FIXME : add the cross-platform support
-    let status = Command::new("ogr2ogr")
+
+    let handle = get_handle().unwrap();
+    let status = handle
+        .shell()
+        .sidecar("ogr2ogr")?
         .args([
             "-f",
             "GPKG",
@@ -119,7 +121,8 @@ pub fn convert_to_gpkg(
             "OGR_GEOMETRY_CORRECT_UNCLOSED_RINGS",
             "YES",
         ])
-        .status()?;
+        .status()
+        .await?;
 
     if !status.success() {
         return Err("Failed to convert to GeoPackage".into());
@@ -138,7 +141,7 @@ pub fn convert_to_gpkg(
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si la fusion a réussi ou échoué
-pub fn fusion_datasets(
+pub async fn fusion_datasets(
     datasets: &[String],
     output_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -151,28 +154,26 @@ pub fn fusion_datasets(
     }
 
     let first_dataset = &datasets[0];
-    // FIXME : add the cross-platform support
-    let mut status = Command::new("ogr2ogr")
-        .arg("-f")
-        .arg("GPKG")
-        .arg(output_gpkg)
-        .arg(first_dataset)
-        .status()?;
+
+    let handle = get_handle().unwrap();
+    let mut status = handle
+        .shell()
+        .sidecar("ogr2ogr")?
+        .args(["-f", "GPKG", output_gpkg, first_dataset])
+        .status()
+        .await?;
 
     if !status.success() {
         return Err(format!("Failed to process first dataset: {first_dataset}").into());
     }
 
     for dataset in datasets.iter().skip(1) {
-        // FIXME : add the cross-platform support
-        status = Command::new("ogr2ogr")
-            .arg("-f")
-            .arg("GPKG")
-            .arg("-append")
-            .arg("-update")
-            .arg(output_gpkg)
-            .arg(dataset)
-            .status()?;
+        status = handle
+            .shell()
+            .sidecar("ogr2ogr")?
+            .args(["-f", "GPKG", "-append", "-update", output_gpkg, dataset])
+            .status()
+            .await?;
 
         if !status.success() {
             return Err(format!("Failed to append dataset: {dataset}").into());
@@ -193,7 +194,7 @@ pub fn fusion_datasets(
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si le découpage a réussi ou échoué
-pub fn clip_to_bb(
+pub async fn clip_to_bb(
     input_gpkg: &str,
     output_gpkg: &str,
     project_bb: &BoundingBox,
@@ -201,8 +202,11 @@ pub fn clip_to_bb(
     let current_dir = std::env::current_dir()?;
     let input_gpkg = current_dir.join(input_gpkg);
     let output_gpkg = current_dir.join(output_gpkg);
-    // FIXME : add the cross-platform support
-    let status = Command::new("ogr2ogr")
+
+    let handle = get_handle().unwrap();
+    let status = handle
+        .shell()
+        .sidecar("ogr2ogr")?
         .args([
             "-f",
             "GPKG",
@@ -226,7 +230,8 @@ pub fn clip_to_bb(
             "OGR_GEOMETRY_CORRECT_UNCLOSED_RINGS",
             "YES",
         ])
-        .status()?;
+        .status()
+        .await?;
 
     if !status.success() {
         return Err("Failed to clip GeoPackage".into());

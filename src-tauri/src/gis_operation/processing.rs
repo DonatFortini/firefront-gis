@@ -1,5 +1,7 @@
 use gdal::{Dataset, DriverManager};
-use std::process::Command;
+use tauri_plugin_shell::ShellExt;
+
+use crate::utils::get_handle;
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -16,8 +18,8 @@ use std::process::Command;
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si la rastérisation a réussi ou échoué
-pub fn rasterize_layer(
-    project: &Dataset,
+pub async fn rasterize_layer(
+    project_path: &str,
     vector_gpkg: &str,
     layer_name: &str,
     output_raster: &str,
@@ -25,6 +27,8 @@ pub fn rasterize_layer(
     where_clause: Option<&str>,
     additional_args: Option<Vec<&str>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let project = Dataset::open(project_path)?;
+
     let geo_transform = project.geo_transform()?;
     let (width, height) = project.raster_size();
 
@@ -64,8 +68,14 @@ pub fn rasterize_layer(
 
     args.push(vector_gpkg);
     args.push(output_raster);
-    // FIXME : add the cross-platform support
-    let status = Command::new("gdal_rasterize").args(args).status()?;
+
+    let handle = get_handle().unwrap();
+    let status = handle
+        .shell()
+        .sidecar("gdal_rasterize")?
+        .args(args)
+        .status()
+        .await?;
 
     if !status.success() {
         return Err("gdal_rasterize failed".into());

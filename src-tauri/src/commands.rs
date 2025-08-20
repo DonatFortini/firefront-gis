@@ -31,7 +31,6 @@ use crate::{
 ///
 /// # Arguments
 ///
-/// * `app_handle` - Handle de l'application Tauri.
 /// * `name` - Nom du projet.
 /// * `project_bb` - Boîte englobante du projet.
 ///
@@ -178,7 +177,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
     if region_codes.len() > 1 {
         emit_progress("Fusion des données|Fusion des couches régionales|1/4");
 
-        if let Err(e) = fusion_datasets(&regional_gpkgs, &regional_merged_gpkg) {
+        if let Err(e) = fusion_datasets(&regional_gpkgs, &regional_merged_gpkg).await {
             return Err(format!(
                 "Erreur lors de la fusion des couches régionales: {e:?}"
             ));
@@ -186,7 +185,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
 
         emit_progress("Fusion des données|Fusion des couches de végétation|2/4");
 
-        if let Err(e) = fusion_datasets(&vegetation_gpkgs, &vegetation_merged_gpkg) {
+        if let Err(e) = fusion_datasets(&vegetation_gpkgs, &vegetation_merged_gpkg).await {
             return Err(format!(
                 "Erreur lors de la fusion des couches de végétation: {e:?}"
             ));
@@ -194,7 +193,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
 
         emit_progress("Fusion des données|Fusion des couches RPG|3/4");
 
-        if let Err(e) = fusion_datasets(&rpg_gpkgs, &rpg_merged_gpkg) {
+        if let Err(e) = fusion_datasets(&rpg_gpkgs, &rpg_merged_gpkg).await {
             return Err(format!("Erreur lors de la fusion des couches RPG: {e:?}"));
         }
 
@@ -207,7 +206,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
                 "Fusion des données|Fusion de {layer_name}|{topo_count}/{total_topo_layers}"
             ));
             let topo_merged_path = format!("{project_folder}/resources/{layer_name}.gpkg");
-            if let Err(e) = fusion_datasets(paths, &topo_merged_path) {
+            if let Err(e) = fusion_datasets(paths, &topo_merged_path).await {
                 return Err(format!(
                     "Erreur lors de la fusion des couches topo {layer_name}: {e:?}"
                 ));
@@ -252,7 +251,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
     }
 
     emit_progress("Ajout des Couches");
-    if let Err(e) = add_layers(&project_file_path) {
+    if let Err(e) = add_layers(&project_file_path).await {
         return Err(format!("Erreur lors de l'ajout des couches: {e:?}"));
     }
 

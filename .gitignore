@@ -1,4 +1,4 @@
 /dist/
 /target/
 /Cargo.lock
-config.json
+config.db
