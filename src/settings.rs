@@ -30,7 +30,6 @@ struct DialogOptions {
 pub fn settings_component() -> Html {
     let os = use_state(|| String::from("Inconnu"));
     let output_location = use_state(String::new);
-    let gdal_path = use_state(String::new);
     let app_settings_loaded = use_state(|| false);
     let status_message = use_state(|| Option::<(String, bool)>::None);
 
@@ -48,7 +47,6 @@ pub fn settings_component() -> Html {
 
     {
         let output_location = output_location.clone();
-        let gdal_path = gdal_path.clone();
         let settings_loaded = app_settings_loaded.clone();
 
         use_effect_with((), move |_| {
@@ -66,13 +64,6 @@ pub fn settings_component() -> Html {
                                 settings.get("output_location").and_then(|v| v.as_str())
                             {
                                 output_location.set(output.to_string());
-                            }
-
-                            if let Some(gdal) = settings.get("gdal_path")
-                                && !gdal.is_null()
-                                && let Some(path) = gdal.as_str()
-                            {
-                                gdal_path.set(path.to_string());
                             }
 
                             settings_loaded.set(true);
@@ -114,30 +105,6 @@ pub fn settings_component() -> Html {
         })
     };
 
-    let on_browse_gdal = {
-        let gdal_path = gdal_path.clone();
-        Callback::from(move |_| {
-            let gdal_path = gdal_path.clone();
-            spawn_local(async move {
-                let options = DialogOptions {
-                    directory: false,
-                    default_path: if gdal_path.is_empty() {
-                        None
-                    } else {
-                        Some((*gdal_path).clone())
-                    },
-                    title: String::from("Sélectionner l'exécutable GDAL"),
-                };
-
-                if let Ok(args) = serde_wasm_bindgen::to_value(&options)
-                    && let Some(selected_path) = open(args).await.as_string()
-                {
-                    gdal_path.set(selected_path);
-                }
-            });
-        })
-    };
-
     let on_clear_cache = {
         let status_message = status_message.clone();
 
@@ -166,27 +133,17 @@ pub fn settings_component() -> Html {
 
     let on_submit = {
         let output_location = output_location.clone();
-        let gdal_path = gdal_path.clone();
         let status_message = status_message.clone();
 
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
 
             let output_location = output_location.clone();
-            let gdal_path = gdal_path.clone();
             let status_message = status_message.clone();
 
             spawn_local(async move {
                 let mut map = HashMap::new();
                 map.insert("output_location", Some((*output_location).clone()));
-                map.insert(
-                    "gdal_path",
-                    if gdal_path.is_empty() {
-                        None
-                    } else {
-                        Some((*gdal_path).clone())
-                    },
-                );
 
                 let args = serde_wasm_bindgen::to_value(&map).unwrap();
 
@@ -241,19 +198,6 @@ pub fn settings_component() -> Html {
                             readonly=true
                         />
                         <button type="button" onclick={on_browse_output}>{"Parcourir"}</button>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="gdal-path">{"Chemin d'installation de GDAL"}</label>
-                    <div class="input-with-button">
-                        <input
-                            type="text"
-                            id="gdal-path"
-                            placeholder="Détecté automatiquement"
-                            value={(*gdal_path).clone()}
-                            readonly=true
-                        />
-                        <button type="button" onclick={on_browse_gdal}>{"Parcourir"}</button>
                     </div>
                 </div>
 

@@ -380,16 +380,9 @@ pub async fn delete_project(project_name: &str) -> Result<String, String> {
 /// - `Result<serde_json::Value, String>` : Un objet JSON contenant les paramètres de configuration ou une erreur.
 pub fn get_settings() -> Result<serde_json::Value, String> {
     let output_location = get_config(|config| config.output_location.to_string_lossy().to_string());
-    let gdal_path = get_config(|config| {
-        config
-            .gdal_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-    });
 
     Ok(serde_json::json!({
         "output_location": output_location,
-        "gdal_path": gdal_path,
     }))
 }
 
@@ -399,18 +392,14 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
 /// # Arguments
 ///
 /// * `output_location` - Option<String> : L'emplacement de sortie.
-/// * `gdal_path` - Option<String> : Le chemin vers GDAL.
 ///
 /// # Retourne
 ///
 /// * `String` : Un message de succès ou d'erreur.
-pub fn save_settings(output_location: Option<String>, gdal_path: Option<String>) -> String {
+pub fn save_settings(output_location: Option<String>) -> String {
     match config::update_config(|config| {
         if let Some(output_location) = output_location {
             config.output_location = std::path::PathBuf::from(output_location);
-        }
-        if let Some(gdal_path) = gdal_path {
-            config.gdal_path = Some(std::path::PathBuf::from(gdal_path));
         }
         Ok(())
     }) {

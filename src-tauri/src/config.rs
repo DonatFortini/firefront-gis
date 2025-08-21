@@ -46,7 +46,6 @@ pub struct AppConfig {
     pub resolution: f64,
     pub slice_factor: u32,
     pub output_location: PathBuf,
-    pub gdal_path: Option<PathBuf>,
     #[serde(skip)]
     pub handle: Option<AppHandle>,
     #[serde(skip)]
@@ -96,7 +95,6 @@ impl AppConfig {
             resolution: DEFAULT_RESOLUTION,
             slice_factor: DEFAULT_SLICE_FACTOR,
             output_location: OUTPUT_DIR.lock().unwrap().clone(),
-            gdal_path: None,
             handle,
             db_path,
             app_data_dir,
@@ -131,8 +129,10 @@ impl AppConfig {
         ];
 
         for (key, path) in path_fields {
-            let absolute_path = path.to_string_lossy().to_string();
-            Self::set_config_value(conn, key, &absolute_path)?;
+            if !Self::config_key_exists(conn, key)? {
+                let absolute_path = path.to_string_lossy().to_string();
+                Self::set_config_value(conn, key, &absolute_path)?;
+            }
         }
 
         let special_fields = [
@@ -174,9 +174,6 @@ impl AppConfig {
         {
             self.slice_factor = slice_factor;
         }
-        if let Ok(value) = Self::get_config_value(conn, "gdal_path") {
-            self.gdal_path = Some(PathBuf::from(value));
-        }
         Ok(())
     }
 
@@ -198,12 +195,6 @@ impl AppConfig {
 
         Self::set_config_value(&conn, "resolution", &self.resolution.to_string())?;
         Self::set_config_value(&conn, "slice_factor", &self.slice_factor.to_string())?;
-
-        if let Some(ref gdal_path) = self.gdal_path {
-            Self::set_config_value(&conn, "gdal_path", &gdal_path.to_string_lossy())?;
-        } else {
-            conn.execute("DELETE FROM config WHERE key = 'gdal_path'", [])?;
-        }
 
         Ok(())
     }
@@ -256,11 +247,7 @@ impl AppConfig {
         Ok(result)
     }
 
-    pub fn update(
-        &mut self,
-        output_location: Option<String>,
-        gdal_path: Option<String>,
-    ) -> Result<()> {
+    pub fn update(&mut self, output_location: Option<String>) -> Result<()> {
         if let Some(output) = output_location {
             let path = PathBuf::from(output);
             self.output_location = if path.is_absolute() {
@@ -269,15 +256,6 @@ impl AppConfig {
                 self.app_data_dir.join(path)
             };
         }
-
-        self.gdal_path = gdal_path.map(|p| {
-            let path = PathBuf::from(p);
-            if path.is_absolute() {
-                path
-            } else {
-                self.app_data_dir.join(path)
-            }
-        });
         Ok(())
     }
 
