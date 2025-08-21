@@ -264,9 +264,8 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
 
         if path.is_dir()
             && let Some(project_name) = path.file_name().and_then(|n| n.to_str())
-            && project_name != "cache"
         {
-            let project_path = project_dir(project_name);
+            let project_path = in_project_dir(project_name);
             let preview_image_path = project_path.join(format!("{project_name}_ORTHO.jpeg"));
             projects.insert(
                 project_name.to_string(),
@@ -452,6 +451,18 @@ pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn clean_tmp() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = temp_dir();
+
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir)?;
+    }
+
+    std::fs::create_dir(&tmp_dir)?;
+
+    Ok(())
+}
+
 pub fn emit_progress(message: &str) {
     get_handle()
         .unwrap()
@@ -507,10 +518,6 @@ pub fn in_resource_dir<P: AsRef<Path>>(path: P) -> PathBuf {
     resource_dir().join(path)
 }
 
-pub fn project_dir(project_name: &str) -> PathBuf {
-    in_projects_dir(project_name)
-}
-
-pub fn in_project_dir(project_name: &str, path: &str) -> PathBuf {
-    project_dir(project_name).join(path)
+pub fn in_project_dir<P: AsRef<Path>>(path: P) -> PathBuf {
+    projects_dir().join(path)
 }

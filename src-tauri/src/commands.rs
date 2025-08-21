@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path};
 
 use crate::{
     config::get_config,
-    utils::{emit_progress, get_handle},
+    utils::{clean_tmp, emit_progress, get_handle, temp_dir},
 };
 use tauri::command;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
@@ -22,6 +22,11 @@ use crate::{
     },
 };
 
+#[command]
+pub fn get_os() -> String {
+    get_operating_system().to_string()
+}
+
 #[command(rename_all = "snake_case")]
 /// Crée un projet avec les fichiers SHP associés.
 /// Télécharge les fichiers SHP nécessaires, crée un projet de carte,
@@ -39,9 +44,6 @@ use crate::{
 /// * `Result<String, String>` - Chemin du dossier du projet créé ou un message d'erreur.
 pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result<String, String> {
     emit_progress("Recherche des fichiers");
-
-    create_directory_if_not_exists("tmp")
-        .map_err(|e| format!("Erreur lors de la création du dossier tmp: {e:?}"))?;
 
     let mut region_codes: Vec<String> = Vec::new();
     match find_intersecting_regions(&project_bb) {
@@ -98,8 +100,10 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
     emit_progress("Initialisation du projet");
 
     let project_folder = format!("{}/{name}", projects_dir().to_string_lossy());
+    println!("project_folder: {:?}", project_folder);
     let project_file_path = format!("{project_folder}/{name}.tiff");
-
+    println!("cache_dir: {:?}", cache_dir());
+    println!("temp_dir: {:?}", temp_dir());
     if std::path::Path::new(&project_file_path).exists() {
         let should_overwrite = get_handle()
             .unwrap()
@@ -117,7 +121,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
     }
 
     emit_progress("Initialisation du projet|Création des dossiers|1/2");
-
+    //FIXME : problem path on build
     std::fs::create_dir_all(&project_folder).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{project_folder}/resources")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{project_folder}/slices")).map_err(|e| e.to_string())?;
@@ -164,9 +168,6 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
             ));
         }
     }
-
-    create_directory_if_not_exists("tmp")
-        .map_err(|e| format!("Erreur lors de la création du dossier tmp: {e:?}"))?;
 
     emit_progress("Fusion des données|Fusion des régions|1/4");
 
@@ -282,13 +283,11 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
 
     emit_progress("Nettoyage");
 
-    fs::remove_dir_all("tmp")
-        .await
-        .map_err(|e| format!("Erreur lors de la suppression du dossier tmp: {e:?}"))?;
-
-    fs::create_dir("tmp")
-        .await
-        .map_err(|e| format!("Erreur lors de la création du dossier tmp: {e:?}"))?;
+    if let Err(e) = clean_tmp() {
+        return Err(format!(
+            "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
+        ));
+    }
 
     emit_progress("Projet créé avec succès");
 
@@ -304,9 +303,24 @@ pub fn get_projects() -> HashMap<String, Vec<String>> {
     get_previous_projects().unwrap()
 }
 
-#[command]
-pub fn get_os() -> String {
-    get_operating_system().to_string()
+/// Récupère les données d'un projet existant.(permet au front de display les images du projet)
+///
+/// # Arguments
+/// * `name` - Le nom du projet.
+/// * `data` - Le nom du fichier de données.
+///
+/// # Retourne
+/// - Result<String, String> : Le chemin du fichier de données ou une erreur.
+#[tauri::command]
+pub fn get_project_data(name: String, data: String) -> Result<String, String> {
+    let project_folder = format!("{}/{name}", projects_dir().to_string_lossy());
+    let project_file_path = format!("{project_folder}/{data}");
+
+    if !std::path::Path::new(&project_file_path).exists() {
+        return Err(format!("Le projet '{name}' n'existe pas"));
+    }
+
+    Ok(project_file_path)
 }
 
 #[command(rename_all = "snake_case")]

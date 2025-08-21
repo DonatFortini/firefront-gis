@@ -79,7 +79,7 @@ async fn test_end_to_end_workflow() {
     ];
 
     for (input, output) in geojson_to_gpkg {
-        let result = convert_to_gpkg(input, output);
+        let result = convert_to_gpkg(input, output).await;
         assert_result_ok(
             &result,
             &format!("Conversion of {input} to GeoPackage failed"),
@@ -89,7 +89,7 @@ async fn test_end_to_end_workflow() {
     for subfolder in &topo_subfolders {
         let shapefile_path = format!("tmp/{subfolder}/{subfolder}.shp");
         let gpkg_path = format!("tests/res/test_{subfolder}.gpkg");
-        let result = convert_to_gpkg(&shapefile_path, &gpkg_path);
+        let result = convert_to_gpkg(&shapefile_path, &gpkg_path).await;
         assert_result_ok(
             &result,
             &format!("Conversion of {subfolder} to GeoPackage failed"),
@@ -109,35 +109,36 @@ async fn test_end_to_end_workflow() {
     ];
 
     for (input, output) in gpkg_to_clip {
-        let result = clip_to_bb(input, output, &project_bb);
+        let result = clip_to_bb(input, output, &project_bb).await;
         assert_result_ok(&result, &format!("Clipping of {input} failed"));
     }
 
     for subfolder in &topo_subfolders {
         let gpkg_path = format!("tests/res/test_{subfolder}.gpkg");
         let clipped_gpkg_path = format!("tests/res/test_{subfolder}_clipped.gpkg");
-        let result = clip_to_bb(&gpkg_path, &clipped_gpkg_path, &project_bb);
+        let result = clip_to_bb(&gpkg_path, &clipped_gpkg_path, &project_bb).await;
         assert_result_ok(&result, &format!("Clipping of {subfolder} failed"));
     }
 
-    type LayerAdder = fn(&str, &str) -> Result<(), Box<dyn std::error::Error>>;
-    let layers_to_add: Vec<(&str, LayerAdder)> = vec![
-        ("tests/res/test_regional_clipped.gpkg", add_regional_layer),
-        (
-            "tests/res/test_vegetation_clipped.gpkg",
-            add_vegetation_layer,
-        ),
-        ("tests/res/test_rpg_clipped.gpkg", add_rpg_layer),
+    let layers_to_add = vec![
+        ("tests/res/test_regional_clipped.gpkg", "regional"),
+        ("tests/res/test_vegetation_clipped.gpkg", "vegetation"),
+        ("tests/res/test_rpg_clipped.gpkg", "rpg"),
     ];
 
-    for (layer, add_layer_fn) in layers_to_add {
-        let result = add_layer_fn(project_file_path, layer);
+    for (layer, layer_type) in layers_to_add {
+        let result = match layer_type {
+            "regional" => add_regional_layer(project_file_path, layer).await,
+            "vegetation" => add_vegetation_layer(project_file_path, layer).await,
+            "rpg" => add_rpg_layer(project_file_path, layer).await,
+            _ => unreachable!(),
+        };
         assert_result_ok(&result, &format!("Adding layer {layer} failed"));
     }
 
     for subfolder in &topo_subfolders {
         let clipped_gpkg_path = format!("tests/res/test_{subfolder}_clipped.gpkg");
-        let result = add_topo_layer(project_file_path, &clipped_gpkg_path);
+        let result = add_topo_layer(project_file_path, &clipped_gpkg_path).await;
         assert_result_ok(
             &result,
             &format!("Adding topography layer {subfolder} failed"),

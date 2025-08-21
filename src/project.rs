@@ -1,4 +1,3 @@
-use gloo_timers::callback::Timeout;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -24,114 +23,83 @@ pub struct ProjectProps {
 #[function_component(Project)]
 pub fn project(props: &ProjectProps) -> Html {
     let project_data = use_state(|| props.project_data.clone());
-    let image_loaded = use_state(|| false);
+    let image_src = use_state(String::new);
+    let image_loading = use_state(|| true);
     let image_error = use_state(|| false);
-    let retry_count = use_state(|| 0);
 
-    let image_path = {
+    let load_image = {
         let project_data = project_data.clone();
-        use_memo(
-            (project_data.name.clone(), project_data.view_mode.clone()),
-            |(project_name, view_mode)| {
-                let file_path = match view_mode {
-                    ViewMode::Vegetation => {
-                        format!("projects/{project_name}/{project_name}_VEGET.jpeg")
-                    }
-                    ViewMode::Satellite => {
-                        format!("projects/{project_name}/{project_name}_ORTHO.jpeg")
-                    }
-                };
-                convertFileSrc(&file_path, None)
-            },
-        )
-    };
-
-    {
-        let image_loaded = image_loaded.clone();
+        let image_src = image_src.clone();
+        let image_loading = image_loading.clone();
         let image_error = image_error.clone();
-        let retry_count = retry_count.clone();
-        use_effect_with(image_path.clone(), move |_| {
-            image_loaded.set(false);
-            image_error.set(false);
-            retry_count.set(0);
-            || ()
-        });
-    }
-
-    let check_image_with_retry = {
-        let image_path = image_path.clone();
-        let image_loaded = image_loaded.clone();
-        let image_error = image_error.clone();
-        let retry_count = retry_count.clone();
 
         Callback::from(move |_| {
-            let image_path = (*image_path).clone();
-            let image_loaded = image_loaded.clone();
+            let project_data = (*project_data).clone();
+            let image_src = image_src.clone();
+            let image_loading = image_loading.clone();
             let image_error = image_error.clone();
-            let retry_count = retry_count.clone();
 
             spawn_local(async move {
-                let img = web_sys::HtmlImageElement::new().unwrap();
+                image_loading.set(true);
+                image_error.set(false);
 
-                let onload = {
-                    let image_loaded = image_loaded.clone();
-                    Closure::wrap(Box::new(move |_: web_sys::Event| {
-                        image_loaded.set(true);
-                    }) as Box<dyn FnMut(_)>)
+                let file_path = match project_data.view_mode {
+                    ViewMode::Vegetation => format!("{}_VEGET.jpeg", project_data.name),
+                    ViewMode::Satellite => format!("{}_ORTHO.jpeg", project_data.name),
                 };
 
-                let onerror = {
-                    let image_error = image_error.clone();
-                    let retry_count = retry_count.clone();
-                    let image_path = image_path.clone();
-                    Closure::wrap(Box::new(move |_: web_sys::Event| {
-                        let current_retry = *retry_count;
-                        if current_retry < 5 {
-                            retry_count.set(current_retry + 1);
-                            let image_path = image_path.clone();
-                            Timeout::new(1000, move || {
-                                let timestamp = js_sys::Date::now() as u64;
-                                let img_with_cache_bust = web_sys::HtmlImageElement::new().unwrap();
-                                img_with_cache_bust.set_src(&format!("{image_path}?t={timestamp}"));
-                            })
-                            .forget();
+                #[derive(Serialize)]
+                struct GetProjectDataArgs {
+                    name: String,
+                    data: String,
+                }
+
+                let args = GetProjectDataArgs {
+                    name: project_data.name.clone(),
+                    data: file_path,
+                };
+
+                match invoke(
+                    "get_project_data",
+                    serde_wasm_bindgen::to_value(&args).unwrap(),
+                )
+                .await
+                {
+                    result if result.is_string() => {
+                        if let Some(relative_path) = result.as_string() {
+                            let converted_path = convertFileSrc(&relative_path, None);
+                            image_src.set(converted_path);
+                            image_loading.set(false);
                         } else {
                             image_error.set(true);
+                            image_loading.set(false);
                         }
-                    }) as Box<dyn FnMut(_)>)
-                };
-
-                img.set_onload(Some(onload.as_ref().unchecked_ref()));
-                img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-                img.set_src(&image_path);
-
-                onload.forget();
-                onerror.forget();
+                    }
+                    _ => {
+                        image_error.set(true);
+                        image_loading.set(false);
+                    }
+                }
             });
         })
     };
 
     {
-        let check_image_with_retry = check_image_with_retry.clone();
-        use_effect_with(image_path.clone(), move |_| {
-            check_image_with_retry.emit(());
+        let load_image = load_image.clone();
+        let project_data = project_data.clone();
+        use_effect_with(project_data.view_mode.clone(), move |_| {
+            load_image.emit(());
             || ()
         });
     }
 
-    let on_image_load = {
-        let image_loaded = image_loaded.clone();
-        Callback::from(move |_: Event| {
-            image_loaded.set(true);
-        })
-    };
-
-    let on_image_error = {
-        let check_image_with_retry = check_image_with_retry.clone();
-        Callback::from(move |_: Event| {
-            check_image_with_retry.emit(());
-        })
-    };
+    {
+        let load_image = load_image.clone();
+        use_effect_with((), move |_| {
+            load_image.emit(());
+            || ()
+        });
+    }
 
     let on_toggle_view = {
         let project_data = project_data.clone();
@@ -212,20 +180,25 @@ pub fn project(props: &ProjectProps) -> Html {
             <div class="project-content">
                 <div class="map-container">
                     {
-                        if *image_loaded {
+                        if *image_loading {
                             html! {
-                                <img
-                                    src={(*image_path).clone()}
-                                    alt={format!("Vue cartographique de {}", project_data.name)}
-                                    onload={on_image_load}
-                                    onerror={on_image_error}
-                                />
+                                <div class="image-loading">
+                                    <p>{"Chargement de l'image..."}</p>
+                                    <div class="loading-spinner"></div>
+                                </div>
                             }
                         } else if *image_error {
                             html! {
                                 <div class="image-error">
                                     <p>{"Erreur de chargement de l'image"}</p>
                                 </div>
+                            }
+                        } else if !(*image_src).is_empty() {
+                            html! {
+                                <img
+                                    src={(*image_src).clone()}
+                                    alt={format!("Vue cartographique de {}", project_data.name)}
+                                />
                             }
                         } else {
                             html! {

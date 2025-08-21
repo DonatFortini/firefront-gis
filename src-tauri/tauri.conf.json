@@ -24,7 +24,7 @@
         "enable": true,
         "scope": {
           "allow": [
-            "projects/**/*"
+            "$APPDATA/**"
           ]
         }
       }

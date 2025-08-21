@@ -1,13 +1,14 @@
 use crate::gis_operation::regions::build_regions_graph;
-use crate::utils::{OUTPUT_DIR, create_directory_if_not_exists};
+use crate::utils::OUTPUT_DIR;
 use rusqlite::{Connection, Result as SqliteResult, params};
 use serde::{Deserialize, Serialize};
+use std::fs::create_dir_all;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 use tauri::{AppHandle, Manager};
 use thiserror::Error;
 
-const CACHE_DIR: &str = "projects/cache";
+const CACHE_DIR: &str = "cache";
 const PROJECTS_DIR: &str = "projects";
 const TEMP_DIR: &str = "tmp";
 const RESOURCES_DIR: &str = "resources";
@@ -19,8 +20,6 @@ const DEFAULT_SLICE_FACTOR: u32 = 500;
 pub enum ConfigError {
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
     #[error("Configuration directory not found")]
     ConfigDirNotFound,
     #[error("Invalid path: {0}")]
@@ -52,19 +51,24 @@ pub struct AppConfig {
     pub handle: Option<AppHandle>,
     #[serde(skip)]
     db_path: PathBuf,
+    #[serde(skip)]
+    app_data_dir: PathBuf,
 }
 
 static CONFIG_INSTANCE: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self::with_resource_dir(PathBuf::from(RESOURCES_DIR))
-    }
-}
-
 impl AppConfig {
     pub fn init(app_handle: AppHandle) -> Result<()> {
-        let config = Self::new(app_handle)?;
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|_| ConfigError::ConfigDirNotFound)?;
+
+        let db_path = app_data_dir.join("config.db");
+        let resource_dir = resolve_resource_dir(&app_handle, RESOURCES_DIR)
+            .unwrap_or_else(|_| app_data_dir.join(RESOURCES_DIR));
+
+        let config = Self::new(resource_dir, db_path, app_data_dir, Some(app_handle))?;
         CONFIG_INSTANCE
             .set(Arc::new(RwLock::new(config)))
             .map_err(|_| {
@@ -76,56 +80,40 @@ impl AppConfig {
         Ok(())
     }
 
-    fn new(app_handle: AppHandle) -> Result<Self> {
-        let db_path = Self::get_database_path(&app_handle)?;
-        let resource_dir = resolve_resource_dir(&app_handle, RESOURCES_DIR)
-            .unwrap_or_else(|_| PathBuf::from(RESOURCES_DIR));
+    fn new(
+        resource_dir: PathBuf,
+        db_path: PathBuf,
+        app_data_dir: PathBuf,
+        handle: Option<AppHandle>,
+    ) -> Result<Self> {
+        create_dir_all(db_path.parent().unwrap_or(&PathBuf::from(".")))?;
 
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let mut config = Self::with_resource_dir_and_db(resource_dir, db_path);
-        config.handle = Some(app_handle);
-        config.initialize_database()?;
-        config.load_from_database()?;
-        Ok(config)
-    }
-
-    fn get_database_path(app_handle: &AppHandle) -> Result<PathBuf> {
-        Ok(app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|_| ConfigError::ConfigDirNotFound)?
-            .join("config.db"))
-    }
-
-    fn with_resource_dir(resource_dir: PathBuf) -> Self {
-        Self::with_resource_dir_and_db(resource_dir, PathBuf::from("config.db"))
-    }
-
-    fn with_resource_dir_and_db(resource_dir: PathBuf, db_path: PathBuf) -> Self {
-        Self {
-            cache_dir: PathBuf::from(CACHE_DIR),
-            projects_dir: PathBuf::from(PROJECTS_DIR),
-            temp_dir: PathBuf::from(TEMP_DIR),
+        let mut config = Self {
+            cache_dir: app_data_dir.join(CACHE_DIR),
+            projects_dir: app_data_dir.join(PROJECTS_DIR),
+            temp_dir: app_data_dir.join(TEMP_DIR),
             resource_dir,
             resolution: DEFAULT_RESOLUTION,
             slice_factor: DEFAULT_SLICE_FACTOR,
             output_location: OUTPUT_DIR.lock().unwrap().clone(),
             gdal_path: None,
-            handle: None,
+            handle,
             db_path,
-        }
+            app_data_dir,
+        };
+
+        config.initialize_and_load()?;
+        Ok(config)
     }
 
-    fn get_connection(&self) -> SqliteResult<Connection> {
-        Connection::open(&self.db_path)
+    fn initialize_and_load(&mut self) -> Result<()> {
+        let conn = Connection::open(&self.db_path)?;
+        self.initialize_database(&conn)?;
+        self.load_from_database(&conn)?;
+        Ok(())
     }
 
-    fn initialize_database(&self) -> Result<()> {
-        let conn = self.get_connection()?;
-
+    fn initialize_database(&self, conn: &Connection) -> Result<()> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY,
@@ -134,158 +122,113 @@ impl AppConfig {
             [],
         )?;
 
-        self.initialize_default_values(&conn)?;
-        Ok(())
-    }
-
-    fn initialize_default_values(&self, conn: &Connection) -> Result<()> {
-        let settings = [
-            ("cache_dir", self.cache_dir.to_string_lossy().to_string()),
-            (
-                "projects_dir",
-                self.projects_dir.to_string_lossy().to_string(),
-            ),
-            ("temp_dir", self.temp_dir.to_string_lossy().to_string()),
-            (
-                "resource_dir",
-                self.resource_dir.to_string_lossy().to_string(),
-            ),
-            ("resolution", self.resolution.to_string()),
-            ("slice_factor", self.slice_factor.to_string()),
-            (
-                "output_location",
-                self.output_location.to_string_lossy().to_string(),
-            ),
+        let path_fields = [
+            ("cache_dir", &self.cache_dir),
+            ("projects_dir", &self.projects_dir),
+            ("temp_dir", &self.temp_dir),
+            ("resource_dir", &self.resource_dir),
+            ("output_location", &self.output_location),
         ];
 
-        for (key, value) in settings.iter() {
-            let exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM config WHERE key = ?1)",
-                params![key],
-                |row| row.get(0),
-            )?;
-
-            if !exists {
-                conn.execute(
-                    "INSERT INTO config (key, value) VALUES (?1, ?2)",
-                    params![key, value],
-                )?;
-            }
+        for (key, path) in path_fields {
+            let absolute_path = path.to_string_lossy().to_string();
+            Self::set_config_value(conn, key, &absolute_path)?;
         }
 
+        let special_fields = [
+            ("resolution", self.resolution.to_string()),
+            ("slice_factor", self.slice_factor.to_string()),
+        ];
+
+        for (key, value) in special_fields {
+            if !Self::config_key_exists(conn, key)? {
+                Self::set_config_value(conn, key, &value)?;
+            }
+        }
         Ok(())
     }
 
-    fn load_from_database(&mut self) -> Result<()> {
-        let conn = self.get_connection()?;
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'cache_dir'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
+    fn load_from_database(&mut self, conn: &Connection) -> Result<()> {
+        if let Ok(value) = Self::get_config_value(conn, "cache_dir") {
             self.cache_dir = PathBuf::from(value);
         }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'projects_dir'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
+        if let Ok(value) = Self::get_config_value(conn, "projects_dir") {
             self.projects_dir = PathBuf::from(value);
         }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'temp_dir'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
+        if let Ok(value) = Self::get_config_value(conn, "temp_dir") {
             self.temp_dir = PathBuf::from(value);
         }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'resource_dir'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
+        if let Ok(value) = Self::get_config_value(conn, "resource_dir") {
             self.resource_dir = PathBuf::from(value);
         }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'resolution'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) && let Ok(resolution) = value.parse::<f64>()
+        if let Ok(value) = Self::get_config_value(conn, "output_location") {
+            self.output_location = PathBuf::from(value);
+        }
+        if let Ok(value) = Self::get_config_value(conn, "resolution")
+            && let Ok(resolution) = value.parse::<f64>()
         {
             self.resolution = resolution;
         }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'slice_factor'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) && let Ok(slice_factor) = value.parse::<u32>()
+        if let Ok(value) = Self::get_config_value(conn, "slice_factor")
+            && let Ok(slice_factor) = value.parse::<u32>()
         {
             self.slice_factor = slice_factor;
         }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'output_location'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
-            self.output_location = PathBuf::from(value);
-        }
-
-        if let Ok(value) = conn.query_row(
-            "SELECT value FROM config WHERE key = 'gdal_path'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
+        if let Ok(value) = Self::get_config_value(conn, "gdal_path") {
             self.gdal_path = Some(PathBuf::from(value));
         }
-
         Ok(())
     }
 
     fn save_to_database(&self) -> Result<()> {
-        let conn = self.get_connection()?;
+        let conn = Connection::open(&self.db_path)?;
 
-        let settings = [
-            ("cache_dir", self.cache_dir.to_string_lossy().to_string()),
-            (
-                "projects_dir",
-                self.projects_dir.to_string_lossy().to_string(),
-            ),
-            ("temp_dir", self.temp_dir.to_string_lossy().to_string()),
-            (
-                "resource_dir",
-                self.resource_dir.to_string_lossy().to_string(),
-            ),
-            ("resolution", self.resolution.to_string()),
-            ("slice_factor", self.slice_factor.to_string()),
-            (
-                "output_location",
-                self.output_location.to_string_lossy().to_string(),
-            ),
+        let path_fields = [
+            ("cache_dir", &self.cache_dir),
+            ("projects_dir", &self.projects_dir),
+            ("temp_dir", &self.temp_dir),
+            ("resource_dir", &self.resource_dir),
+            ("output_location", &self.output_location),
         ];
 
-        for (key, value) in settings.iter() {
-            conn.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
-                params![key, value],
-            )?;
+        for (key, path) in path_fields {
+            let value = path.to_string_lossy().to_string();
+            Self::set_config_value(&conn, key, &value)?;
         }
 
+        Self::set_config_value(&conn, "resolution", &self.resolution.to_string())?;
+        Self::set_config_value(&conn, "slice_factor", &self.slice_factor.to_string())?;
+
         if let Some(ref gdal_path) = self.gdal_path {
-            conn.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES ('gdal_path', ?1)",
-                params![gdal_path.to_string_lossy().to_string()],
-            )?;
+            Self::set_config_value(&conn, "gdal_path", &gdal_path.to_string_lossy())?;
         } else {
             conn.execute("DELETE FROM config WHERE key = 'gdal_path'", [])?;
         }
 
+        Ok(())
+    }
+
+    fn config_key_exists(conn: &Connection, key: &str) -> SqliteResult<bool> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM config WHERE key = ?1)",
+            params![key],
+            |row| row.get(0),
+        )
+    }
+
+    fn get_config_value(conn: &Connection, key: &str) -> SqliteResult<String> {
+        conn.query_row(
+            "SELECT value FROM config WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+    }
+
+    fn set_config_value(conn: &Connection, key: &str, value: &str) -> SqliteResult<()> {
+        conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
         Ok(())
     }
 
@@ -319,19 +262,27 @@ impl AppConfig {
         gdal_path: Option<String>,
     ) -> Result<()> {
         if let Some(output) = output_location {
-            self.output_location = PathBuf::from(output);
+            let path = PathBuf::from(output);
+            self.output_location = if path.is_absolute() {
+                path
+            } else {
+                self.app_data_dir.join(path)
+            };
         }
-        self.gdal_path = gdal_path.map(PathBuf::from);
-        self.save_to_database()?;
+
+        self.gdal_path = gdal_path.map(|p| {
+            let path = PathBuf::from(p);
+            if path.is_absolute() {
+                path
+            } else {
+                self.app_data_dir.join(path)
+            }
+        });
         Ok(())
     }
 
     pub fn regions_graph_path(&self) -> PathBuf {
         self.resource_dir.join(REGIONS_GRAPH_FILE)
-    }
-
-    pub fn required_dirs(&self) -> Vec<&PathBuf> {
-        vec![&self.cache_dir, &self.temp_dir]
     }
 }
 
@@ -345,20 +296,11 @@ fn resolve_resource_dir(app_handle: &AppHandle, resource_path: &str) -> Result<P
         })
 }
 
-/// Initialise l'application en créant les répertoires nécessaires et en chargeant la configuration.
-///
-/// # Arguments
-/// * `app_handle` - Un handle vers l'application Tauri.
-///
-/// # Returns
-/// * `Result<(), String>` - Un résultat indiquant si l'initialisation a réussi ou non.
 pub fn initialize_app(app_handle: &AppHandle) -> Result<()> {
     AppConfig::init(app_handle.clone())?;
-
-    AppConfig::with_read(|config| {
-        for dir in config.required_dirs() {
-            create_directory_if_not_exists(&dir.to_string_lossy())
-                .map_err(|e| ConfigError::Io(std::io::Error::other(e.to_string())))?;
+    AppConfig::with_write(|config| {
+        for dir_path in [&config.cache_dir, &config.temp_dir, &config.projects_dir] {
+            create_dir_all(dir_path)?;
         }
 
         let regions_graph_path = config.regions_graph_path();

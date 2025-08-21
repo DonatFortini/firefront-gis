@@ -141,9 +141,7 @@ fn load_projects(projects: UseStateHandle<Vec<Project>>) {
                 })
                 .collect::<Vec<Project>>();
 
-            if !loaded_projects.is_empty() {
-                projects.set(loaded_projects);
-            }
+            projects.set(loaded_projects);
         } else {
             web_sys::console::error_1(&"Échec de l'analyse des projets".into());
         }

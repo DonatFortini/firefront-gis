@@ -1,6 +1,6 @@
 use commands::{
-    clear_cache, create_project_com, delete_project, export, get_os, get_projects, get_settings,
-    save_settings,
+    clear_cache, create_project_com, delete_project, export, get_os, get_project_data,
+    get_projects, get_settings, save_settings,
 };
 use config::initialize_app;
 use tauri::Manager;
@@ -21,7 +21,6 @@ pub fn run() {
             let res_dir = app_handle
                 .path()
                 .resolve("resources", tauri::path::BaseDirectory::Resource)?;
-            println!("Resource directory: {:?}", res_dir);
             unsafe {
                 std::env::set_var("PROJ_LIB", res_dir.join("proj").to_str().unwrap());
                 std::env::set_var("GDAL_DATA", res_dir.join("gdal").to_str().unwrap());
@@ -45,6 +44,7 @@ pub fn run() {
             get_os,
             export,
             delete_project,
+            get_project_data,
             get_settings,
             save_settings,
             clear_cache

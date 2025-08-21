@@ -121,9 +121,8 @@ pub async fn download_shp_file(url: &str, code: &str) -> Result<(), Box<dyn Erro
         url if url.contains("RPG") => "RPG",
         _ => "unknown",
     };
-    let cache_dir_path = cache_dir();
-    let cache_folder_path = cache_dir_path.to_str().unwrap_or_default();
-    let archive_path = format!("{cache_folder_path}/{name}_{code}.7z");
+    println!("{}", cache_dir().to_string_lossy());
+    let archive_path = format!("{}/{name}_{code}.7z", cache_dir().to_string_lossy());
 
     if Path::new(&archive_path).exists() {
         fs::remove_file(&archive_path)?;

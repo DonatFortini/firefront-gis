@@ -49,7 +49,7 @@ async fn test_shapefile_to_gpkg_conversion() {
         .unwrap();
     remove_file_if_exists(output_gpkg);
 
-    let result = convert_to_gpkg(input_shapefile, output_gpkg);
+    let result = convert_to_gpkg(input_shapefile, output_gpkg).await;
     assert_result_ok(&result, "Failed to convert shapefile to GeoPackage");
     assert_file_exists(output_gpkg, "GeoPackage file was not created");
 
@@ -69,7 +69,7 @@ async fn test_clip_shapefile() {
     extract_files_by_name("tests/res/BDFORET_2a.7z", "FORMATION_VEGETALE", "tmp")
         .await
         .unwrap();
-    let result = clip_to_bb(input_shapefile, output_gpkg, &project_bb);
+    let result = clip_to_bb(input_shapefile, output_gpkg, &project_bb).await;
     assert_result_ok(&result, "Clipping shapefile failed");
 
     assert_file_exists(output_gpkg, "Clipped GeoPackage file was not created");
@@ -91,12 +91,12 @@ fn test_get_regional_extent() {
     assert_result_ok(&res, "Getting regional extent failed");
 }
 
-#[test]
-fn test_get_regional_gpkg() {
+#[tokio::test]
+async fn test_get_regional_gpkg() {
     create_directory_if_not_exists("tmp").unwrap();
     create_region_geojson("2A", "tmp/2A.geojson").unwrap();
     let output_gpkg = "tmp/2A.gpkg";
-    let result = convert_to_gpkg("tmp/2A.geojson", output_gpkg);
+    let result = convert_to_gpkg("tmp/2A.geojson", output_gpkg).await;
     assert_result_ok(&result, "Creating regional GeoPackage failed");
 }
 
@@ -170,6 +170,6 @@ async fn test_fusion() {
         "tmp/FORMATION_VEGETALE_2B/FORMATION_VEGETALE.shp".to_string(),
     ];
 
-    let res = fusion_datasets(&dataset, "tmp/FORMATION_VEGETALE_FUSION.gpkg");
+    let res = fusion_datasets(&dataset, "tmp/FORMATION_VEGETALE_FUSION.gpkg").await;
     assert_result_ok(&res, "Fusion of datasets failed");
 }

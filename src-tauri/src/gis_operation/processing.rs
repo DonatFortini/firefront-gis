@@ -1,7 +1,7 @@
 use gdal::{Dataset, DriverManager};
 use tauri_plugin_shell::ShellExt;
 
-use crate::utils::get_handle;
+use crate::utils::{get_handle, temp_dir};
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -112,11 +112,11 @@ where
     let project = Dataset::open(project_file_path)?;
     let overlay_raster = Dataset::open(overlay_raster_path)?;
 
-    let output_file = "tmp/output.tif";
+    let output_file = format!("{}/output.tif", temp_dir().to_string_lossy());
     let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
 
     let mut output_dataset = driver_manager.create(
-        output_file,
+        &output_file,
         project.raster_size().0,
         project.raster_size().1,
         4,

@@ -167,27 +167,25 @@ pub async fn add_regional_layer(
     project_file_path: &str,
     regional_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    create_directory_if_not_exists("tmp")?;
-
     let regional_layer_name = {
         let regional_dataset = Dataset::open(regional_gpkg)?;
         regional_dataset.layer(0)?.name()
     };
 
-    let temp_layer = "tmp/temp_layer.tif";
+    let temp_layer = format!("{}/temp_layer.tif", temp_dir().to_string_lossy());
 
     rasterize_layer(
         project_file_path,
         regional_gpkg,
         &regional_layer_name,
-        temp_layer,
+        &temp_layer,
         ["0", "0", "0"],
         None,
         None,
     )
     .await?;
 
-    apply_overlay(project_file_path, temp_layer, |&value| value > 0)?;
+    apply_overlay(project_file_path, &temp_layer, |&value| value > 0)?;
 
     std::fs::remove_file(temp_layer)?;
 
@@ -208,26 +206,25 @@ pub async fn add_rpg_layer(
     project_file_path: &str,
     rpg_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    create_directory_if_not_exists("tmp")?;
-
     let rpg_layer_name = {
         let rpg_dataset = Dataset::open(rpg_gpkg)?;
         rpg_dataset.layer(0)?.name()
     };
-    let temp_rpg_layer = "tmp/temp_rpg_layer.tif";
+
+    let temp_rpg_layer = format!("{}/temp_rpg_layer.tif", temp_dir().to_string_lossy());
 
     rasterize_layer(
         project_file_path,
         rpg_gpkg,
         &rpg_layer_name,
-        temp_rpg_layer,
+        &temp_rpg_layer,
         ["25", "50", "60"],
         None,
         None,
     )
     .await?;
 
-    apply_overlay(project_file_path, temp_rpg_layer, |&value| value > 0)?;
+    apply_overlay(project_file_path, &temp_rpg_layer, |&value| value > 0)?;
 
     std::fs::remove_file(temp_rpg_layer)?;
 
@@ -248,8 +245,6 @@ pub async fn add_vegetation_layer(
     project_file_path: &str,
     vegetation_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    create_directory_if_not_exists("tmp")?;
-
     let vegetation_layer_name = {
         let vegetation_dataset = Dataset::open(vegetation_gpkg)?;
         vegetation_dataset.layer(0)?.name()
@@ -285,16 +280,19 @@ pub async fn add_vegetation_layer(
         .collect::<Vec<String>>()
         .join(", ");
     let other_where = format!("ESSENCE NOT IN ({all_types})");
-    let temp_vegetation = "tmp/temp_vegetation.tif";
-    let temp_feuillus = "tmp/temp_feuillus.tif";
-    let temp_undefined = "tmp/temp_undefined.tif";
-    let temp_other = "tmp/temp_other.tif";
+
+    let temp_path = temp_dir().to_string_lossy().to_string();
+
+    let temp_vegetation = format!("{}/temp_vegetation.tif", temp_path);
+    let temp_feuillus = format!("{}/temp_feuillus.tif", temp_path);
+    let temp_undefined = format!("{}/temp_undefined.tif", temp_path);
+    let temp_other = format!("{}/temp_other.tif", temp_path);
 
     rasterize_layer(
         project_file_path,
         vegetation_gpkg,
         &vegetation_layer_name,
-        temp_feuillus,
+        &temp_feuillus,
         ["80", "200", "120"],
         Some(&feuillus_where),
         None,
@@ -305,7 +303,7 @@ pub async fn add_vegetation_layer(
         project_file_path,
         vegetation_gpkg,
         &vegetation_layer_name,
-        temp_undefined,
+        &temp_undefined,
         ["25", "50", "60"],
         Some(&undefined_where),
         None,
@@ -316,7 +314,7 @@ pub async fn add_vegetation_layer(
         project_file_path,
         vegetation_gpkg,
         &vegetation_layer_name,
-        temp_other,
+        &temp_other,
         ["50", "200", "80"],
         Some(&other_where),
         None,
@@ -328,7 +326,7 @@ pub async fn add_vegetation_layer(
     let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
     let (width, height) = project.raster_size();
 
-    let mut vegetation_raster = driver_manager.create(temp_vegetation, width, height, 3)?;
+    let mut vegetation_raster = driver_manager.create(&temp_vegetation, width, height, 3)?;
 
     vegetation_raster.set_geo_transform(&project.geo_transform()?)?;
     vegetation_raster.set_projection(&project.projection())?;
@@ -342,9 +340,9 @@ pub async fn add_vegetation_layer(
             &mut gdal::raster::Buffer::new((width, height), zeros),
         )?;
     }
-    let feuillus_dataset = Dataset::open(temp_feuillus)?;
-    let undefined_dataset = Dataset::open(temp_undefined)?;
-    let other_dataset = Dataset::open(temp_other)?;
+    let feuillus_dataset = Dataset::open(&temp_feuillus)?;
+    let undefined_dataset = Dataset::open(&temp_undefined)?;
+    let other_dataset = Dataset::open(&temp_other)?;
 
     for band_idx in 1..=3 {
         let mut veg_band = vegetation_raster.rasterband(band_idx)?;
@@ -390,12 +388,12 @@ pub async fn add_vegetation_layer(
     undefined_dataset.close().unwrap();
     other_dataset.close().unwrap();
     vegetation_raster.close().unwrap();
-    apply_overlay(project_file_path, temp_vegetation, |&value| value > 0)?;
+    apply_overlay(project_file_path, &temp_vegetation, |&value| value > 0)?;
 
-    std::fs::remove_file(temp_vegetation)?;
-    std::fs::remove_file(temp_feuillus)?;
-    std::fs::remove_file(temp_undefined)?;
-    std::fs::remove_file(temp_other)?;
+    std::fs::remove_file(&temp_vegetation)?;
+    std::fs::remove_file(&temp_feuillus)?;
+    std::fs::remove_file(&temp_undefined)?;
+    std::fs::remove_file(&temp_other)?;
 
     Ok(())
 }
@@ -414,16 +412,12 @@ pub async fn add_topo_layer(
     project_file_path: &str,
     topo_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    create_directory_if_not_exists("tmp")?;
-
-    // Extract all necessary data from project and topo datasets before any await
     let (project_raster_size, project_geo_transform, project_projection, geom_type, layer_name) = {
         let project = Dataset::open(project_file_path)?;
         let project_raster_size = project.raster_size();
         let project_geo_transform = project.geo_transform()?;
         let project_projection = project.projection();
 
-        // Extract topo data
         let topo_dataset = Dataset::open(topo_gpkg)?;
         let mut topo_layer = topo_dataset.layer(0)?;
 
@@ -441,8 +435,6 @@ pub async fn add_topo_layer(
             .geometry_type();
 
         let layer_name = topo_layer.name();
-
-        // Explicitly drop everything before returning
         topo_dataset.close().unwrap();
         project.close().unwrap();
 
@@ -455,13 +447,12 @@ pub async fn add_topo_layer(
         )
     };
 
-    let temp_topo_layer = "tmp/temp_topo_layer.tif";
+    let temp_topo_layer = format!("{}/temp_topo_layer.tif", temp_dir().to_string_lossy());
 
-    // Create dummy raster (no await here, so this is safe)
     {
         let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
         let mut dummy_raster = driver_manager.create(
-            temp_topo_layer,
+            &temp_topo_layer,
             project_raster_size.0,
             project_raster_size.1,
             3,
@@ -484,42 +475,20 @@ pub async fn add_topo_layer(
         }
 
         dummy_raster.close().unwrap();
-    } // dummy_raster is dropped here
+    }
 
-    let args = if geom_type == OGRwkbGeometryType::wkbLineString
+    let mut args = vec!["-burn", "0", "-burn", "0", "-burn", "0", "-l", &layer_name];
+
+    if geom_type == OGRwkbGeometryType::wkbLineString
         || geom_type == OGRwkbGeometryType::wkbMultiLineString
     {
-        vec![
-            "-burn",
-            "0",
-            "-burn",
-            "0",
-            "-burn",
-            "0",
-            "-l",
-            &layer_name,
-            "-at",
-            topo_gpkg,
-            temp_topo_layer,
-        ]
-    } else {
-        vec![
-            "-burn",
-            "0",
-            "-burn",
-            "0",
-            "-burn",
-            "0",
-            "-l",
-            &layer_name,
-            topo_gpkg,
-            temp_topo_layer,
-        ]
-    };
+        args.push("-at");
+    }
+
+    args.extend_from_slice(&[topo_gpkg, &temp_topo_layer]);
 
     let handle = get_handle().unwrap();
 
-    // AWAIT POINT - All GDAL objects are dropped before this point
     let status = handle
         .shell()
         .sidecar("gdal_rasterize")?
@@ -531,19 +500,22 @@ pub async fn add_topo_layer(
         return Err("gdal_rasterize failed".into());
     }
 
-    // After await - safe to create new GDAL objects
-    let output_file = "tmp/output.tif";
+    let output_file = format!("{}/output.tif", temp_dir().to_string_lossy());
 
     {
         let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
-        let mut output_dataset =
-            driver_manager.create(output_file, project_raster_size.0, project_raster_size.1, 4)?;
+        let mut output_dataset = driver_manager.create(
+            &output_file,
+            project_raster_size.0,
+            project_raster_size.1,
+            4,
+        )?;
 
         output_dataset.set_geo_transform(&project_geo_transform)?;
         output_dataset.set_projection(&project_projection)?;
 
         let project = Dataset::open(project_file_path)?;
-        let topo_raster = Dataset::open(temp_topo_layer)?;
+        let topo_raster = Dataset::open(&temp_topo_layer)?;
 
         let base_data = [
             project.rasterband(1)?,
@@ -615,10 +587,10 @@ pub async fn add_topo_layer(
         output_dataset.close().unwrap();
         topo_raster.close().unwrap();
         project.close().unwrap();
-    } // All GDAL objects are dropped here
+    }
 
     std::fs::rename(output_file, project_file_path)?;
-    std::fs::remove_file(temp_topo_layer)?;
+    std::fs::remove_file(&temp_topo_layer)?;
 
     Ok(())
 }
@@ -743,9 +715,8 @@ pub async fn download_satellite_jpeg(
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = temp_dir().to_string_lossy().to_string();
-    create_directory_if_not_exists(&temp_dir)?;
 
-    let wms_cache_dir = format!("{temp_dir}/wms_cache");
+    let wms_cache_dir = format!("{}/wms_cache", cache_dir().to_string_lossy());
     create_directory_if_not_exists(&wms_cache_dir)?;
 
     let resolution = resolution();
