@@ -32,8 +32,6 @@ Développée spécifiquement pour répondre aux besoins du SIS2B, Firefront GIS 
 L'application nécessite l'installation préalable des composants externes suivants :
 
 - **GDAL** (Geospatial Data Abstraction Library) : Bibliothèque de traitement des données géospatiales
-- **7-Zip** : Outil d'extraction d'archives
-- **ImageMagick** : Suite logicielle de traitement d'images (pseudo-dépendance de Vulcain)
 
 ⚠️ **IMPORTANT** : GDAL doit impérativement être installé sur votre système **avant la compilation** du projet, pas seulement pour son exécution. Cette dépendance est requise lors du processus de build.
 
@@ -44,8 +42,6 @@ L'application nécessite l'installation préalable des composants externes suiva
 1. **Installez les dépendances requises** :
 
    - GDAL avec les bibliothèques de développement (headers)
-   - 7-Zip
-   - ImageMagick
 
    **Note** : Sur Linux, vous pouvez installer GDAL via :
 
@@ -148,7 +144,6 @@ L'application compilée sera disponible dans le répertoire `target/release`.
 Accédez au panneau de configuration pour :
 
 - Modifier le répertoire de sortie des projets exportés
-- Spécifier le chemin d'installation de GDAL si non détecté automatiquement
 - Vider le cache de données pour libérer de l'espace disque
 
 ## Architecture technique
@@ -196,6 +191,4 @@ Lors de l'exportation, l'application :
 4. Conditionne toutes les données dans un format compressé
 5. Enregistre l'ensemble dans l'emplacement de sortie spécifié
 
-## Licence
 
-GPL-3.0
