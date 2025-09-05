@@ -1,5 +1,6 @@
 use crate::config::get_config;
-use gdal::vector::Geometry;
+use geo::Geometry;
+use geo_types::Error as GeoError;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,8 +10,10 @@ use std::fs::{self};
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
+use wkt::{ToWkt, Wkt};
 
 use crate::gis_operation::slicing::slice_images;
+use geo_types::{Coord, Polygon};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
 pub struct BoundingBox {
@@ -38,24 +41,60 @@ impl BoundingBox {
         self.ymax - self.ymin
     }
 
-    pub fn to_wkt(&self) -> String {
-        format!(
-            "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
-            self.xmin,
-            self.ymin,
-            self.xmax,
-            self.ymin,
-            self.xmax,
-            self.ymax,
-            self.xmin,
-            self.ymax,
-            self.xmin,
-            self.ymin
-        )
+    pub fn to_wkt(&self) -> Wkt<f64> {
+        let coords = vec![
+            Coord {
+                x: self.xmin,
+                y: self.ymin,
+            },
+            Coord {
+                x: self.xmax,
+                y: self.ymin,
+            },
+            Coord {
+                x: self.xmax,
+                y: self.ymax,
+            },
+            Coord {
+                x: self.xmin,
+                y: self.ymax,
+            },
+            Coord {
+                x: self.xmin,
+                y: self.ymin,
+            },
+        ];
+
+        let polygon = Polygon::new(coords.into(), vec![]);
+        polygon.to_wkt()
     }
 
-    pub fn to_geometry(&self) -> Result<Geometry, gdal::errors::GdalError> {
-        Geometry::from_wkt(&self.to_wkt())
+    pub fn to_geometry(&self) -> Result<Geometry, GeoError> {
+        let coords = vec![
+            Coord {
+                x: self.xmin,
+                y: self.ymin,
+            },
+            Coord {
+                x: self.xmax,
+                y: self.ymin,
+            },
+            Coord {
+                x: self.xmax,
+                y: self.ymax,
+            },
+            Coord {
+                x: self.xmin,
+                y: self.ymax,
+            },
+            Coord {
+                x: self.xmin,
+                y: self.ymin,
+            },
+        ];
+
+        let polygon = Polygon::new(coords.into(), vec![]);
+        Ok(Geometry::from(polygon))
     }
 
     pub fn intersects(&self, other: &BoundingBox) -> bool {

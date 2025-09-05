@@ -35,8 +35,11 @@ chrono = "0.4.40"
 regex = "1.11.1"
 geojson = "0.24.2"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
-
-gdal = { version = "0.18.0", features = ["bindgen"] }
 thiserror = "2.0.15"
-[target.'cfg(target_os="windows")'.dependencies]
-gdal = "0.18.0"
+geo = "0.31.0"
+geo-types = "0.7.17"
+geo-rasterize = "0.1.2"
+shapefile = "0.7.0"
+geozero = "0.14.0"
+wkt = "0.14.0"
+gdal = { version = "0.18.0", features = ["bindgen"] }

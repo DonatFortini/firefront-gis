@@ -7,56 +7,36 @@ use std::{
     path::Path,
 };
 
-use gdal::vector::Geometry;
+use geo::{Contains, Intersects, Relate};
+use geo_types::Geometry;
 use geojson::GeoJson;
-use serde::de::{self, Visitor};
+use serde::de::{self};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt;
+use wkt::ToWkt;
 
 use crate::{config::get_config, utils::BoundingBox};
-
-struct GeometryDef {
-    wkt: String,
-}
-
-impl From<&Geometry> for GeometryDef {
-    fn from(geom: &Geometry) -> Self {
-        GeometryDef {
-            wkt: geom.wkt().unwrap_or_default(),
-        }
-    }
-}
 
 fn serialize_geometry<S>(geom: &Geometry, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let geom_def = GeometryDef::from(geom);
-    serializer.serialize_str(&geom_def.wkt)
-}
-
-struct GeometryVisitor;
-
-impl Visitor<'_> for GeometryVisitor {
-    type Value = Geometry;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a string containing WKT geometry")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        Geometry::from_wkt(value).map_err(|e| de::Error::custom(format!("Invalid WKT: {e}")))
-    }
+    let wkt_string = geom.to_wkt().to_string();
+    serializer.serialize_str(&wkt_string)
 }
 
 fn deserialize_geometry<'de, D>(deserializer: D) -> Result<Geometry, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserializer.deserialize_str(GeometryVisitor)
+    let wkt_string = String::deserialize(deserializer)?;
+    let geom = wkt::TryFromWkt::try_from_wkt_str(&wkt_string);
+    match geom {
+        Ok(g) => Ok(g),
+        Err(e) => Err(de::Error::custom(format!(
+            "Failed to deserialize Geometry from WKT: {}",
+            e
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,13 +154,7 @@ pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Er
         let geojson_value = serde_json::to_value(geometry).unwrap();
         let geojson_str = serde_json::to_string(&geojson_value).unwrap();
 
-        let gdal_geom = match Geometry::from_geojson(&geojson_str) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("Failed to convert geometry for region {code}: {e}");
-                continue;
-            }
-        };
+        let gdal_geom: Geometry = geojson_str.parse::<geojson::Geometry>()?.try_into()?;
 
         let region = Region::new(code.clone(), name, gdal_geom);
         regions_info.insert(code, region);
@@ -200,7 +174,7 @@ pub fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<dyn Er
             if intersects {
                 adjacency_updates.push((code_i.clone(), code_j.clone()));
             } else {
-                let touches = geom_i.touches(&geom_j);
+                let touches = geom_i.relate(&geom_j).is_touches();
                 if touches {
                     adjacency_updates.push((code_i.clone(), code_j.clone()));
                 }
@@ -312,8 +286,7 @@ pub fn find_intersecting_regions(
 pub fn create_region_geojson(region_id: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
     let region = get_region(region_id)?;
     let gdal_geom = region.get_extent();
-    let geojson_string = gdal_geom.json()?;
-    let geometry: geojson::Geometry = serde_json::from_str(&geojson_string)?;
+    let geometry: geojson::Geometry = gdal_geom.into();
     let mut properties = serde_json::Map::new();
     properties.insert(
         "code".to_string(),
