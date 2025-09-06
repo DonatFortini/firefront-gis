@@ -12,13 +12,13 @@ use firefront_gis_lib::{
 use gdal::Dataset;
 use std::fs;
 
-#[test]
-fn test_project_creation() {
+#[tokio::test]
+async fn test_project_creation() {
     let project_path = "tests/res/test_project.tiff";
     remove_file_if_exists(project_path);
 
     let bbox = get_test_bounding_box();
-    let result = create_project(project_path, &bbox);
+    let result = create_project(project_path, &bbox).await;
     assert_result_ok(&result, "Failed to create project");
     assert_file_exists(project_path, "Project file not created");
 

@@ -128,7 +128,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
 
     emit_progress("Initialisation du projet|Configuration du projet|2/2");
 
-    if let Err(e) = create_project(&project_file_path, &project_bb) {
+    if let Err(e) = create_project(&project_file_path, &project_bb).await {
         return Err(format!("Erreur lors de la création du projet: {e:?}"));
     }
 

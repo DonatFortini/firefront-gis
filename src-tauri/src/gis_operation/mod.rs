@@ -1,4 +1,3 @@
-use gdal::{DriverManager, spatial_ref::SpatialRef};
 use tauri_plugin_shell::ShellExt;
 
 use crate::utils::{BoundingBox, get_handle, resolution};
@@ -43,39 +42,63 @@ pub mod slicing;
 ///```
 ///
 ///
-pub fn create_project(
+pub async fn create_project(
     project_file_path: &str,
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resolution = resolution();
     let width = (project_bb.width() / resolution).ceil() as usize;
     let height = (project_bb.height() / resolution).ceil() as usize;
-    if !(width % 500 == 0 && height % 500 == 0) {
+
+    if width % 500 != 0 || height % 500 != 0 {
         return Err("Width and height must be multiples of 500".into());
     }
 
-    let driver = DriverManager::get_driver_by_name("GTiff")?;
-    let mut dataset = driver.create(project_file_path, width, height, 4)?;
-    let geotransform = [
-        project_bb.xmin,
-        resolution,
-        0.0,
-        project_bb.ymax,
-        0.0,
-        -resolution,
-    ];
-    dataset.set_geo_transform(&geotransform)?;
-    let srs = SpatialRef::from_epsg(2154)?;
-    dataset.set_projection(&srs.to_wkt()?)?;
+    let status = get_handle()
+        .unwrap()
+        .shell()
+        .sidecar("gdal_create")?
+        .args([
+            "-of",
+            "GTiff",
+            "-ot",
+            "Byte",
+            "-outsize",
+            &width.to_string(),
+            &height.to_string(),
+            "-bands",
+            "4",
+            "-burn",
+            "0",
+            "-burn",
+            "0",
+            "-burn",
+            "0",
+            "-burn",
+            "255",
+            "-a_srs",
+            "EPSG:2154",
+            "-a_ullr",
+            &project_bb.xmin.to_string(),
+            &project_bb.ymax.to_string(),
+            &project_bb.xmax.to_string(),
+            &project_bb.ymin.to_string(),
+            "-co",
+            "TILED=YES",
+            "-co",
+            "COMPRESS=LZW",
+            "-co",
+            "BIGTIFF=IF_SAFER",
+            project_file_path,
+        ])
+        .status()
+        .await?;
 
-    for band_idx in 1..=3 {
-        let mut band = dataset.rasterband(band_idx)?;
-        band.fill(0.0, None)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to create project raster".into())
     }
-    let mut band = dataset.rasterband(4)?;
-    band.fill(255.0, None)?;
-
-    Ok(())
 }
 
 /// Convertit un fichier en format GeoPackage (GPKG) en utilisant ogr2ogr
