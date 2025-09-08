@@ -1,21 +1,41 @@
-use gdal::vector::{LayerAccess, OGRwkbGeometryType};
 use gdal::{Dataset, DriverManager};
-use std::collections::{BTreeMap, HashMap};
-use std::fs;
-use std::path::Path;
-use std::time::Duration;
+use rusqlite::Connection;
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::Path,
+    time::Duration,
+};
 use tokio::time::sleep;
 
-use super::create_region_geojson;
-use super::processing::{apply_overlay, rasterize_layer};
-use super::{clip_to_bb, convert_to_gpkg};
-
-use crate::utils::{
-    cache_dir, create_directory_if_not_exists, emit_progress, executor, extract_files_by_name,
-    resolution, temp_dir,
+use super::{
+    create_region_geojson,
+    processing::{apply_overlay, rasterize_layer},
+    {clip_to_bb, convert_to_gpkg},
 };
 
-use crate::types::BoundingBox;
+use crate::{
+    types::BoundingBox,
+    utils::{
+        cache_dir, clean_tmp, create_directory_if_not_exists, emit_progress, executor,
+        extract_files_by_name, resolution, temp_dir,
+    },
+};
+
+fn get_layer_name(
+    gpkg_path: &str,
+    layer_index: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let conn = Connection::open(gpkg_path)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT table_name FROM gpkg_contents WHERE data_type = 'features' ORDER BY table_name LIMIT 1 OFFSET ?"
+    )?;
+
+    let layer_name: String = stmt.query_row([layer_index], |row| row.get::<_, String>(0))?;
+
+    Ok(layer_name)
+}
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
 /// Retourne les chemins vers les fichiers GPKG pour chaque type de couche
@@ -169,11 +189,7 @@ pub async fn add_regional_layer(
     project_file_path: &str,
     regional_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let regional_layer_name = {
-        let regional_dataset = Dataset::open(regional_gpkg)?;
-        regional_dataset.layer(0)?.name()
-    };
-
+    let regional_layer_name = get_layer_name(regional_gpkg, 0)?;
     let temp_layer = format!("{}/temp_layer.tif", temp_dir().to_string_lossy());
 
     rasterize_layer(
@@ -208,10 +224,7 @@ pub async fn add_rpg_layer(
     project_file_path: &str,
     rpg_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let rpg_layer_name = {
-        let rpg_dataset = Dataset::open(rpg_gpkg)?;
-        rpg_dataset.layer(0)?.name()
-    };
+    let rpg_layer_name = get_layer_name(rpg_gpkg, 0)?;
 
     let temp_rpg_layer = format!("{}/temp_rpg_layer.tif", temp_dir().to_string_lossy());
 
@@ -247,10 +260,7 @@ pub async fn add_vegetation_layer(
     project_file_path: &str,
     vegetation_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vegetation_layer_name = {
-        let vegetation_dataset = Dataset::open(vegetation_gpkg)?;
-        vegetation_dataset.layer(0)?.name()
-    };
+    let vegetation_layer_name = get_layer_name(vegetation_gpkg, 0)?;
 
     let feuillus_types = [
         "Feuillus",
@@ -285,10 +295,10 @@ pub async fn add_vegetation_layer(
 
     let temp_path = temp_dir().to_string_lossy().to_string();
 
-    let temp_vegetation = format!("{}/temp_vegetation.tif", temp_path);
-    let temp_feuillus = format!("{}/temp_feuillus.tif", temp_path);
-    let temp_undefined = format!("{}/temp_undefined.tif", temp_path);
-    let temp_other = format!("{}/temp_other.tif", temp_path);
+    let temp_vegetation = format!("{temp_path}/temp_vegetation.tif");
+    let temp_feuillus = format!("{temp_path}/temp_feuillus.tif");
+    let temp_undefined = format!("{temp_path}/temp_undefined.tif");
+    let temp_other = format!("{temp_path}/temp_other.tif");
 
     rasterize_layer(
         project_file_path,
@@ -392,11 +402,7 @@ pub async fn add_vegetation_layer(
     vegetation_raster.close().unwrap();
     apply_overlay(project_file_path, &temp_vegetation, |&value| value > 0)?;
 
-    // TODO : Clean_tmp ?
-    std::fs::remove_file(&temp_vegetation)?;
-    std::fs::remove_file(&temp_feuillus)?;
-    std::fs::remove_file(&temp_undefined)?;
-    std::fs::remove_file(&temp_other)?;
+    clean_tmp(None)?;
 
     Ok(())
 }
@@ -422,22 +428,35 @@ pub async fn add_topo_layer(
         let project_projection = project.projection();
 
         let topo_dataset = Dataset::open(topo_gpkg)?;
-        let mut topo_layer = topo_dataset.layer(0)?;
+        let layer_name: String = get_layer_name(topo_gpkg, 0)?;
 
-        if topo_layer.features().next().is_none() {
+        let conn = Connection::open(topo_gpkg)?;
+
+        let feature_count: i64 =
+            conn.query_row(&format!("SELECT COUNT(*) FROM {}", layer_name), [], |row| {
+                row.get(0)
+            })?;
+
+        if feature_count == 0 {
             println!("Layer has no features");
+            conn.close().unwrap();
             return Ok(());
         }
 
-        let geom_type = topo_layer
-            .features()
-            .next()
-            .ok_or("No features in layer")?
-            .geometry()
-            .ok_or("Feature has no geometry")?
-            .geometry_type();
+        let geom_type_name: String = conn.query_row(
+            "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = ?1",
+            [&layer_name],
+            |row| row.get(0),
+        )?;
 
-        let layer_name = topo_layer.name();
+        let geom_type = match geom_type_name.to_uppercase().as_str() {
+            "LINESTRING" | "MULTILINESTRING" => "LineString",
+            "POLYGON" | "MULTIPOLYGON" => "Polygon",
+            "POINT" | "MULTIPOINT" => "Point",
+            _ => "Unknown",
+        };
+
+        conn.close().unwrap();
         topo_dataset.close().unwrap();
         project.close().unwrap();
 
@@ -482,9 +501,7 @@ pub async fn add_topo_layer(
 
     let mut args = vec!["-burn", "0", "-burn", "0", "-burn", "0", "-l", &layer_name];
 
-    if geom_type == OGRwkbGeometryType::wkbLineString
-        || geom_type == OGRwkbGeometryType::wkbMultiLineString
-    {
+    if geom_type == "LineString" {
         args.push("-at");
     }
 

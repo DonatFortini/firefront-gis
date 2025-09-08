@@ -113,7 +113,11 @@ pub async fn compress_folder(
     destination_directory: &str,
 ) -> Result<(), Box<dyn Error>> {
     let output_zip_path = format!("{destination_directory}/{output_zip_name}.zip");
-    executor("_7z", &["a", &output_zip_path, "."]).await?;
+    executor(
+        "_7z",
+        &["a", &output_zip_path, &format!("{}/*", source_folder_path)],
+    )
+    .await?;
     println!("Successfully compressed folder '{source_folder_path}' to '{output_zip_path}'");
     Ok(())
 }
@@ -231,6 +235,10 @@ pub async fn export_project(project_name: &str) -> Result<(), Box<dyn Error>> {
     let project_path = format!("{}/{}", projects_dir().to_string_lossy(), project_name);
     let slice_factor_value = slice_factor();
     let output_dir = output_location().to_string_lossy().to_string();
+
+    println!("Exporting project: {project_name}");
+    println!("Project path: {project_path}");
+    println!("Output directory: {output_dir}");
 
     let date = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

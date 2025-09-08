@@ -6,6 +6,8 @@ use std::path::Path;
 use geo::{Geometry, Intersects, Relate};
 use geojson::GeoJson;
 
+use crate::types::Driver;
+use crate::types::GTiff;
 use crate::types::regions::get_region;
 use crate::types::{BoundingBox, Region};
 use crate::utils::{executor, resolution, resource_dir};
@@ -62,8 +64,6 @@ pub async fn create_project(
     }
 
     let args = [
-        "-of",
-        "GTiff",
         "-ot",
         "Byte",
         "-outsize",
@@ -95,7 +95,7 @@ pub async fn create_project(
         project_file_path,
     ];
 
-    executor("gdal_create", &args).await?;
+    Driver::<GTiff>::new().create(&args).await?;
 
     Ok(())
 }
