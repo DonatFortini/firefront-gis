@@ -568,8 +568,8 @@ pub async fn get_raster_info(file_path: &str) -> Result<RasterInfo, Box<dyn std:
 
 #[derive(Debug)]
 pub struct RasterInfo {
-    width: usize,
-    height: usize,
-    geo_transform: Vec<f64>,
-    projection: String,
+    pub width: usize,
+    pub height: usize,
+    pub geo_transform: Vec<f64>,
+    pub projection: String,
 }

@@ -1,6 +1,9 @@
 use gdal::{Dataset, DriverManager};
 
-use crate::utils::{executor, temp_dir};
+use crate::{
+    gis_operation::get_raster_info,
+    utils::{executor, temp_dir},
+};
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -26,17 +29,21 @@ pub async fn rasterize_layer(
     where_clause: Option<&str>,
     additional_args: Option<Vec<&str>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let project = Dataset::open(project_path)?;
+    let project_info = get_raster_info(project_path).await?;
 
-    let geo_transform = project.geo_transform()?;
-    let (width, height) = project.raster_size();
+    let xmin = project_info.geo_transform[0].to_string();
+    let ymin = (project_info.geo_transform[3]
+        + project_info.geo_transform[5] * project_info.height as f64)
+        .to_string();
+    let xmax = (project_info.geo_transform[0]
+        + project_info.geo_transform[1] * project_info.width as f64)
+        .to_string();
+    let ymax = project_info.geo_transform[3].to_string();
 
-    let xmin = geo_transform[0].to_string();
-    let ymin = (geo_transform[3] + geo_transform[5] * height as f64).to_string();
-    let xmax = (geo_transform[0] + geo_transform[1] * width as f64).to_string();
-    let ymax = geo_transform[3].to_string();
-
-    let (arg_width, arg_height) = (&width.to_string(), &height.to_string());
+    let (arg_width, arg_height) = (
+        &project_info.width.to_string(),
+        &project_info.height.to_string(),
+    );
     let mut args = vec![
         "-burn",
         burn_values[0],
@@ -69,7 +76,6 @@ pub async fn rasterize_layer(
     args.push(output_raster);
 
     executor("gdal_rasterize", &args).await?;
-
     Ok(())
 }
 
