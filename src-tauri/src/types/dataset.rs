@@ -45,7 +45,6 @@ impl<T: DriverFormat> Driver<T> {
     pub async fn create(&self, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
         let mut pref_args = vec!["-of", T::NAME];
         pref_args.extend_from_slice(args);
-
         executor("gdal_create", &pref_args).await?;
         Ok(())
     }
@@ -67,4 +66,8 @@ pub struct Dataset {
     pub width: usize,
     pub height: usize,
     pub bands: usize,
+}
+
+pub mod prelude {
+    pub use super::{Dataset, Driver, DriverFormat, GPKG, GTiff, GeoTransform, JPEG, PNG};
 }

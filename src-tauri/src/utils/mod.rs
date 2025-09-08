@@ -1,15 +1,19 @@
-use crate::config::{ConfigError, get_config};
+pub mod config_utils;
+pub mod progress_handler;
+
 use lazy_static::lazy_static;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
 use crate::gis_operation::slicing::slice_images;
 use crate::types::BoundingBox;
+
+pub use config_utils::prelude::*;
+pub use progress_handler::prelude::*;
 
 lazy_static! {
     pub static ref RPG_DEP: HashMap<&'static str, Vec<&'static str>> = HashMap::from([
@@ -59,6 +63,13 @@ lazy_static! {
 
         std::sync::Mutex::new(output_dir)
     };
+    pub static ref VulcainColors: HashMap<&'static str, [&'static str; 3]> = HashMap::from([
+        ("Chêne", ["80", "200", "120"]),
+        ("Pin", ["50", "200", "80"]),
+        ("Brousaille", ["25", "50", "60"]),
+        ("Chaume", ["4", "25", "30"]),
+        ("Incombustible", ["0", "0", "0"]),
+    ]);
 }
 
 pub fn get_rpg_for_dep_code(code: &str) -> Option<&str> {
@@ -72,13 +83,6 @@ pub fn get_rpg_for_dep_code(code: &str) -> Option<&str> {
             }
         })
         .map(|v| &**v)
-}
-
-pub fn create_directory_if_not_exists(path: &str) -> Result<(), Box<dyn Error>> {
-    if !Path::new(path).exists() {
-        fs::create_dir_all(path)?;
-    }
-    Ok(())
 }
 
 pub async fn executor(
@@ -218,10 +222,6 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
     Ok(projects)
 }
 
-pub fn get_operating_system() -> &'static str {
-    std::env::consts::OS
-}
-
 /// Exporte un projet ainsi que l'ensemble de ses ressources
 /// (images, fichiers de configuration, etc.) dans un format compressé.
 ///
@@ -330,125 +330,4 @@ pub async fn get_geojson_bounding_box(
         xmax: caps[3].parse()?,
         ymax: caps[4].parse()?,
     })
-}
-
-/// Nettoie le dossier tmp en conservant optionnellement les fichiers d'une extension spécifique
-/// Cette fonction est utilisée pour nettoyer les fichiers entre les traitements
-/// de différentes régions dans le processus de création de projet
-///
-/// # Arguments
-///
-/// * `ignore_extension` - Extension des fichiers à conserver (ex: "gpkg"). Si None, supprime tout.
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - Un résultat indiquant le succès ou l'échec
-pub fn clean_tmp(ignore_extension: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = temp_dir();
-
-    if !tmp_dir.exists() {
-        return Ok(());
-    }
-
-    match ignore_extension {
-        Some(ext) => {
-            for entry in std::fs::read_dir(&tmp_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-
-                if path.is_dir() {
-                    std::fs::remove_dir_all(&path)?;
-                    continue;
-                }
-
-                if let Some(extension) = path.extension() {
-                    let extension_str = extension.to_string_lossy();
-                    let target_ext = ext.trim_start_matches('.');
-                    if extension_str != target_ext {
-                        std::fs::remove_file(&path)?;
-                    }
-                } else {
-                    std::fs::remove_file(&path)?;
-                }
-            }
-        }
-        None => {
-            std::fs::remove_dir_all(&tmp_dir)?;
-            std::fs::create_dir(&tmp_dir)?;
-        }
-    }
-
-    Ok(())
-}
-
-pub fn emit_progress(message: &str) {
-    get_handle()
-        .unwrap()
-        .emit("progress-update", message)
-        .unwrap();
-}
-
-pub fn cache_dir() -> PathBuf {
-    get_config(|config| config.cache_dir.clone())
-}
-
-pub fn projects_dir() -> PathBuf {
-    get_config(|config| config.projects_dir.clone())
-}
-
-pub fn temp_dir() -> PathBuf {
-    get_config(|config| config.temp_dir.clone())
-}
-
-pub fn resource_dir() -> PathBuf {
-    get_config(|config| config.resource_dir.clone())
-}
-
-pub fn output_location() -> PathBuf {
-    get_config(|config| config.output_location.clone())
-}
-
-pub fn resolution() -> f64 {
-    get_config(|config| config.resolution)
-}
-
-pub fn slice_factor() -> u32 {
-    get_config(|config| config.slice_factor)
-}
-
-pub fn get_handle() -> Option<tauri::AppHandle> {
-    get_config(|config| config.handle.clone())
-}
-
-pub fn in_cache_dir<P: AsRef<Path>>(path: P) -> bool {
-    cache_dir().join(path).exists()
-}
-
-pub fn in_projects_dir<P: AsRef<Path>>(path: P) -> bool {
-    projects_dir().join(path).exists()
-}
-
-pub fn in_temp_dir<P: AsRef<Path>>(path: P) -> bool {
-    temp_dir().join(path).exists()
-}
-
-pub fn in_resource_dir<P: AsRef<Path>>(path: P) -> bool {
-    resource_dir().join(path).exists()
-}
-
-pub fn in_project_dir<P: AsRef<Path>>(path: P) -> bool {
-    projects_dir().join(path).exists()
-}
-
-pub fn resolve_resource_dir(
-    app_handle: &AppHandle,
-    resource_path: &str,
-) -> Result<PathBuf, ConfigError> {
-    app_handle
-        .path()
-        .resolve(resource_path, tauri::path::BaseDirectory::Resource)
-        .map_err(|e| ConfigError::ResourcePathResolution {
-            path: resource_path.to_string(),
-            source: Box::new(e),
-        })
 }

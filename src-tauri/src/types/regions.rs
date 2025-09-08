@@ -164,3 +164,7 @@ pub fn find_intersecting_regions(
 
     Ok(intersecting_regions)
 }
+
+pub mod prelude {
+    pub use super::{Region, find_intersecting_regions, get_neighbors, get_region};
+}

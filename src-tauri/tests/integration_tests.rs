@@ -6,7 +6,7 @@ use firefront_gis_lib::gis_operation::create_region_geojson;
 use firefront_gis_lib::gis_operation::layers::{
     add_regional_layer, add_rpg_layer, add_topo_layer, add_vegetation_layer,
 };
-use firefront_gis_lib::gis_operation::{clip_to_bb, convert_to_gpkg, create_project};
+use firefront_gis_lib::gis_operation::{clip_to_bb, convert_to_gpkg, create_reference_raster};
 use firefront_gis_lib::utils::{create_directory_if_not_exists, extract_files_by_name};
 use gdal::Dataset;
 use std::fs;
@@ -63,7 +63,7 @@ async fn test_end_to_end_workflow() {
     }
     let result = create_region_geojson("2A", "tmp/2A.geojson");
     assert_result_ok(&result, "Getting regional extent failed");
-    let result = create_project(project_file_path, &project_bb).await;
+    let result = create_reference_raster(project_file_path, &project_bb).await;
     assert_result_ok(&result, "Project creation failed");
 
     let geojson_to_gpkg = vec![

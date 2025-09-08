@@ -94,3 +94,7 @@ async fn save_and_process_slice(
 
     Ok(())
 }
+
+pub mod prelude {
+    pub use super::slice_images;
+}

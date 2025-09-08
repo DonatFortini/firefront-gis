@@ -100,3 +100,7 @@ impl BoundingBox {
             && self.ymax >= other.ymax
     }
 }
+
+pub mod prelude {
+    pub use super::BoundingBox;
+}

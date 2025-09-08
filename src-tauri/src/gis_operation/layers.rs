@@ -1,12 +1,8 @@
-use gdal::{Dataset, DriverManager};
 use rusqlite::Connection;
 use std::{
     collections::{BTreeMap, HashMap},
-    fs,
     path::Path,
-    time::Duration,
 };
-use tokio::time::sleep;
 
 use super::{
     create_region_geojson,
@@ -15,10 +11,10 @@ use super::{
 };
 
 use crate::{
-    types::BoundingBox,
+    types::{BoundingBox, Driver, GTiff},
     utils::{
-        cache_dir, clean_tmp, create_directory_if_not_exists, emit_progress, executor,
-        extract_files_by_name, resolution, temp_dir,
+        LayerProgress, VulcainColors, cache_dir, clean_tmp, executor, extract_files_by_name,
+        temp_dir,
     },
 };
 
@@ -56,7 +52,8 @@ pub async fn prepare_layers(
     let cache_folder_path = cache_dir().to_string_lossy().to_string();
     let temp_dir = temp_dir().to_string_lossy().to_string();
 
-    emit_progress("Préparation des Couches|Préparation de l'étendue régionale|1/4");
+    let mut layer_progress = LayerProgress::new("Préparation des Couches", 4);
+    layer_progress.next_layer("étendue régionale");
 
     let regional_geojson_path = format!("{temp_dir}/{code}.geojson");
     create_region_geojson(code, &regional_geojson_path).unwrap();
@@ -97,9 +94,6 @@ pub async fn prepare_layers(
     let mut rpg_gpkg = String::new();
     let mut topo_gpkgs: HashMap<String, Vec<String>> = HashMap::new();
 
-    let mut layer_index = 2;
-    let total_archives = layers.len();
-
     for (archive, files) in layers {
         let layer_type = if archive.contains("BDFORET") {
             "Végétation"
@@ -111,20 +105,13 @@ pub async fn prepare_layers(
             "Inconnu"
         };
 
-        emit_progress(&format!(
-            "Préparation des Couches|Préparation des couches {layer_type}|{layer_index}/{}",
-            total_archives + 1
-        ));
+        layer_progress.next_layer(&format!("couches {layer_type}"));
 
         let archive_path = format!("{cache_folder_path}/{archive}");
-
         let total_files = files.len();
-        for (file_index, file) in files.iter().enumerate() {
-            emit_progress(&format!(
-                "Préparation des Couches|Extraction de {file}|{}/{total_files}",
-                file_index + 1
-            ));
 
+        for (file_index, file) in files.iter().enumerate() {
+            layer_progress.layer_operation(file, "Extraction", file_index + 1, total_files);
             extract_files_by_name(&archive_path, file, &temp_dir).await.map_err(|e| {
                 format!(
                     "Erreur lors de l'extraction du fichier {file} depuis l'archive {archive}: {e:?}"
@@ -135,10 +122,7 @@ pub async fn prepare_layers(
             let temp_gpkg = format!("{temp_dir}/{file}.gpkg");
             let output_gpkg = format!("{temp_dir}/{code}_{file}.gpkg");
 
-            emit_progress(&format!(
-                "Préparation des Couches|Conversion de {file}|{}/{total_files}",
-                file_index + 1
-            ));
+            layer_progress.layer_operation(file, "Conversion", file_index + 1, total_files);
 
             if let Err(e) = convert_to_gpkg(&temp_file, &temp_gpkg).await {
                 return Err(format!(
@@ -146,10 +130,7 @@ pub async fn prepare_layers(
                 ));
             }
 
-            emit_progress(&format!(
-                "Préparation des Couches|Découpage de {file}|{}/{total_files}",
-                file_index + 1
-            ));
+            layer_progress.layer_operation(file, "Découpage", file_index + 1, total_files);
 
             if let Err(e) = clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await {
                 return Err(format!(
@@ -168,11 +149,152 @@ pub async fn prepare_layers(
                     .push(output_gpkg.clone());
             }
         }
-
-        layer_index += 1;
     }
 
     Ok((regional_gpkg, vegetation_gpkg, rpg_gpkg, topo_gpkgs))
+}
+
+/// Ajoute les couches au projet.
+/// Cette fonction est responsable de l'ajout des couches régionales, de végétation, de RPG et topographiques
+/// au projet en utilisant les chemins fournis.
+/// Elle émet également des événements de mise à jour de progression pour informer l'utilisateur
+/// de l'état d'avancement de l'ajout des couches.
+///
+/// # Arguments
+///
+/// * `app_handle` - Handle de l'application Tauri
+/// * `project_folder` - chemin du dossier du projet
+/// * `project_file_path` - chemin du fichier projet
+/// * `project_name` - nom du projet
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
+pub async fn add_layers(project_file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let project_file_path_obj = Path::new(project_file_path);
+    let project_folder = project_file_path_obj
+        .parent()
+        .ok_or("Invalid project_file_path: no parent directory")?
+        .to_string_lossy()
+        .to_string();
+    let project_name = project_file_path_obj
+        .file_stem()
+        .ok_or("Invalid project_file_path: no file stem")?
+        .to_string_lossy()
+        .to_string();
+
+    let mut layer_progress = LayerProgress::new("Ajout des Couches", 4);
+
+    layer_progress.next_layer("couche régionale");
+
+    if let Err(e) = add_regional_layer(
+        project_file_path,
+        &format!("{project_folder}/resources/{project_name}.gpkg"),
+    )
+    .await
+    {
+        println!("Failed to add regional layer: {e:?}");
+        return Err(e);
+    }
+
+    let mut layers: BTreeMap<i8, Vec<&str>> = BTreeMap::new();
+    layers.insert(1, vec!["FORMATION_VEGETALE"]);
+    layers.insert(2, vec!["PARCELLES_GRAPHIQUES"]);
+    layers.insert(
+        3,
+        vec![
+            "AERODROME",
+            "CONSTRUCTION_SURFACIQUE",
+            "EQUIPEMENT_DE_TRANSPORT",
+            "RESERVOIR",
+            "TERRAIN_DE_SPORT",
+            "TRONCON_DE_VOIE_FERREE",
+            "ZONE_D_ESTRAN",
+            "BATIMENT",
+            "COURS_D_EAU",
+            "PLAN_D_EAU",
+            "SURFACE_HYDROGRAPHIQUE",
+            "TRONCON_DE_ROUTE",
+            "VOIE_NOMMEE",
+        ],
+    );
+
+    for (key, value) in layers {
+        let layer_type = match key {
+            1 => "Végétation",
+            2 => "Parcelles agricoles",
+            3 => "Topographie",
+            _ => "Inconnu",
+        };
+
+        layer_progress.next_layer(&format!("couches {layer_type}"));
+
+        let total_files = value.len();
+        for (file_index, file) in value.iter().enumerate() {
+            layer_progress.layer_operation(
+                &format!("couches {layer_type}"),
+                &format!("Ajout de {file}"),
+                file_index + 1,
+                total_files,
+            );
+
+            let layer_path = format!("{project_folder}/resources/{file}.gpkg");
+            match key {
+                1 => add_vegetation_layer(project_file_path, &layer_path).await,
+                2 => add_rpg_layer(project_file_path, &layer_path).await,
+                3 => add_topo_layer(project_file_path, &layer_path).await,
+                _ => {
+                    println!("Unknown layer type");
+                    return Err(Box::new(std::io::Error::other("Unknown layer type")));
+                }
+            }?
+        }
+    }
+
+    Ok(())
+}
+
+/// Ajoute une couche simple à un projet avec une couleur donnée
+///
+/// # Arguments
+///
+/// * `project_file_path` - chemin du fichier projet
+/// * `gpkg_path` - chemin du fichier GeoPackage contenant les données
+/// * `color` - couleur RGB à appliquer [R, G, B]
+/// * `temp_file_prefix` - préfixe pour le fichier temporaire
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
+async fn add_simple_layer(
+    project_file_path: &str,
+    gpkg_path: &str,
+    color: [&str; 3],
+    temp_file_prefix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let layer_name = get_layer_name(gpkg_path, 0)?;
+    let temp_layer = format!(
+        "{}/temp_{}.tif",
+        temp_dir().to_string_lossy(),
+        temp_file_prefix
+    );
+
+    rasterize_layer(
+        project_file_path,
+        gpkg_path,
+        &layer_name,
+        &temp_layer,
+        color,
+        None,
+        None,
+    )
+    .await?;
+
+    apply_overlay(project_file_path, &temp_layer, |&value| value > 0)?;
+
+    std::fs::remove_file(temp_layer)?;
+
+    Ok(())
 }
 
 /// Ajoute une couche départementale à un projet
@@ -189,25 +311,13 @@ pub async fn add_regional_layer(
     project_file_path: &str,
     regional_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let regional_layer_name = get_layer_name(regional_gpkg, 0)?;
-    let temp_layer = format!("{}/temp_layer.tif", temp_dir().to_string_lossy());
-
-    rasterize_layer(
+    add_simple_layer(
         project_file_path,
         regional_gpkg,
-        &regional_layer_name,
-        &temp_layer,
-        ["0", "0", "0"],
-        None,
-        None,
+        VulcainColors["Incombustible"],
+        "regional",
     )
-    .await?;
-
-    apply_overlay(project_file_path, &temp_layer, |&value| value > 0)?;
-
-    std::fs::remove_file(temp_layer)?;
-
-    Ok(())
+    .await
 }
 
 /// Ajoute une couche RPG (Registre Parcellaire Graphique) à un projet
@@ -224,26 +334,13 @@ pub async fn add_rpg_layer(
     project_file_path: &str,
     rpg_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let rpg_layer_name = get_layer_name(rpg_gpkg, 0)?;
-
-    let temp_rpg_layer = format!("{}/temp_rpg_layer.tif", temp_dir().to_string_lossy());
-
-    rasterize_layer(
+    add_simple_layer(
         project_file_path,
         rpg_gpkg,
-        &rpg_layer_name,
-        &temp_rpg_layer,
-        ["25", "50", "60"],
-        None,
-        None,
+        VulcainColors["Brousaille"],
+        "rpg",
     )
-    .await?;
-
-    apply_overlay(project_file_path, &temp_rpg_layer, |&value| value > 0)?;
-
-    std::fs::remove_file(temp_rpg_layer)?;
-
-    Ok(())
+    .await
 }
 
 /// Ajoute une couche de végétation à un projet en distinguant différents types
@@ -294,18 +391,17 @@ pub async fn add_vegetation_layer(
     let other_where = format!("ESSENCE NOT IN ({all_types})");
 
     let temp_path = temp_dir().to_string_lossy().to_string();
-
-    let temp_vegetation = format!("{temp_path}/temp_vegetation.tif");
     let temp_feuillus = format!("{temp_path}/temp_feuillus.tif");
     let temp_undefined = format!("{temp_path}/temp_undefined.tif");
     let temp_other = format!("{temp_path}/temp_other.tif");
 
+    // Rastériser chaque type exactement comme l'original
     rasterize_layer(
         project_file_path,
         vegetation_gpkg,
         &vegetation_layer_name,
         &temp_feuillus,
-        ["80", "200", "120"],
+        VulcainColors["Chêne"],
         Some(&feuillus_where),
         None,
     )
@@ -316,7 +412,7 @@ pub async fn add_vegetation_layer(
         vegetation_gpkg,
         &vegetation_layer_name,
         &temp_undefined,
-        ["25", "50", "60"],
+        VulcainColors["Brousaille"],
         Some(&undefined_where),
         None,
     )
@@ -327,83 +423,23 @@ pub async fn add_vegetation_layer(
         vegetation_gpkg,
         &vegetation_layer_name,
         &temp_other,
-        ["50", "200", "80"],
+        VulcainColors["Pin"],
         Some(&other_where),
         None,
     )
     .await?;
 
-    let project = Dataset::open(project_file_path)?;
+    // Appliquer EXACTEMENT dans l'ordre de priorité de l'original :
+    // 1. Feuillus d'abord (priorité 1)
+    apply_overlay(project_file_path, &temp_feuillus, |&value| value > 0)?;
 
-    let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
-    let (width, height) = project.raster_size();
+    // 2. Undefined ensuite (priorité 2) - seulement sur les zones encore transparentes
+    apply_overlay(project_file_path, &temp_undefined, |&value| value > 0)?;
 
-    let mut vegetation_raster = driver_manager.create(&temp_vegetation, width, height, 3)?;
-
-    vegetation_raster.set_geo_transform(&project.geo_transform()?)?;
-    vegetation_raster.set_projection(&project.projection())?;
-
-    for i in 1..=3 {
-        let mut band = vegetation_raster.rasterband(i)?;
-        let zeros = vec![0u8; width * height];
-        band.write(
-            (0, 0),
-            (width, height),
-            &mut gdal::raster::Buffer::new((width, height), zeros),
-        )?;
-    }
-    let feuillus_dataset = Dataset::open(&temp_feuillus)?;
-    let undefined_dataset = Dataset::open(&temp_undefined)?;
-    let other_dataset = Dataset::open(&temp_other)?;
-
-    for band_idx in 1..=3 {
-        let mut veg_band = vegetation_raster.rasterband(band_idx)?;
-
-        let feuillus_band = feuillus_dataset.rasterband(band_idx)?;
-        let feuillus_data: Vec<u8> = feuillus_band
-            .read_as::<u8>((0, 0), (width, height), (width, height), None)?
-            .data()
-            .to_vec();
-
-        let undefined_band = undefined_dataset.rasterband(band_idx)?;
-        let undefined_data: Vec<u8> = undefined_band
-            .read_as::<u8>((0, 0), (width, height), (width, height), None)?
-            .data()
-            .to_vec();
-
-        let other_band = other_dataset.rasterband(band_idx)?;
-        let other_data: Vec<u8> = other_band
-            .read_as::<u8>((0, 0), (width, height), (width, height), None)?
-            .data()
-            .to_vec();
-
-        let combined_data: Vec<u8> = feuillus_data
-            .iter()
-            .zip(undefined_data.iter())
-            .zip(other_data.iter())
-            .map(|((&f, &u), &o)| match (f, u, o) {
-                (v, _, _) if v > 0 => v,
-                (_, v, _) if v > 0 => v,
-                (_, _, v) if v > 0 => v,
-                _ => 0,
-            })
-            .collect();
-
-        veg_band.write(
-            (0, 0),
-            (width, height),
-            &mut gdal::raster::Buffer::new((width, height), combined_data),
-        )?;
-    }
-
-    feuillus_dataset.close().unwrap();
-    undefined_dataset.close().unwrap();
-    other_dataset.close().unwrap();
-    vegetation_raster.close().unwrap();
-    apply_overlay(project_file_path, &temp_vegetation, |&value| value > 0)?;
+    // 3. Other en dernier (priorité 3) - seulement sur les zones encore transparentes
+    apply_overlay(project_file_path, &temp_other, |&value| value > 0)?;
 
     clean_tmp(None)?;
-
     Ok(())
 }
 
@@ -421,448 +457,119 @@ pub async fn add_topo_layer(
     project_file_path: &str,
     topo_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (project_raster_size, project_geo_transform, project_projection, geom_type, layer_name) = {
-        let project = Dataset::open(project_file_path)?;
-        let project_raster_size = project.raster_size();
-        let project_geo_transform = project.geo_transform()?;
-        let project_projection = project.projection();
+    let project_info = get_raster_info(project_file_path).await?;
+    let layer_name = get_layer_name(topo_gpkg, 0)?;
 
-        let topo_dataset = Dataset::open(topo_gpkg)?;
-        let layer_name: String = get_layer_name(topo_gpkg, 0)?;
+    // Vérifier s'il y a des features
+    let conn = Connection::open(topo_gpkg)?;
+    let feature_count: i64 =
+        conn.query_row(&format!("SELECT COUNT(*) FROM {}", layer_name), [], |row| {
+            row.get(0)
+        })?;
 
-        let conn = Connection::open(topo_gpkg)?;
-
-        let feature_count: i64 =
-            conn.query_row(&format!("SELECT COUNT(*) FROM {}", layer_name), [], |row| {
-                row.get(0)
-            })?;
-
-        if feature_count == 0 {
-            println!("Layer has no features");
-            conn.close().unwrap();
-            return Ok(());
-        }
-
-        let geom_type_name: String = conn.query_row(
-            "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = ?1",
-            [&layer_name],
-            |row| row.get(0),
-        )?;
-
-        let geom_type = match geom_type_name.to_uppercase().as_str() {
-            "LINESTRING" | "MULTILINESTRING" => "LineString",
-            "POLYGON" | "MULTIPOLYGON" => "Polygon",
-            "POINT" | "MULTIPOINT" => "Point",
-            _ => "Unknown",
-        };
-
+    if feature_count == 0 {
+        println!("Layer has no features");
         conn.close().unwrap();
-        topo_dataset.close().unwrap();
-        project.close().unwrap();
+        return Ok(());
+    }
 
-        (
-            project_raster_size,
-            project_geo_transform,
-            project_projection,
-            geom_type,
-            layer_name,
-        )
+    let geom_type_name: String = conn.query_row(
+        "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = ?1",
+        [&layer_name],
+        |row| row.get(0),
+    )?;
+
+    let geom_type = match geom_type_name.to_uppercase().as_str() {
+        "LINESTRING" | "MULTILINESTRING" => "LineString",
+        "POLYGON" | "MULTIPOLYGON" => "Polygon",
+        "POINT" | "MULTIPOINT" => "Point",
+        _ => "Unknown",
     };
+    conn.close().unwrap();
 
     let temp_topo_layer = format!("{}/temp_topo_layer.tif", temp_dir().to_string_lossy());
 
-    {
-        let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
-        let mut dummy_raster = driver_manager.create(
+    // Créer un raster vide avec les bonnes dimensions
+    Driver::<GTiff>::new()
+        .create(&[
+            "-ot",
+            "Byte",
+            "-outsize",
+            &project_info.width.to_string(),
+            &project_info.height.to_string(),
+            "-bands",
+            "3",
+            "-a_srs",
+            &project_info.projection,
+            "-a_ullr",
+            &project_info.geo_transform[0].to_string(),
+            &project_info.geo_transform[3].to_string(),
+            &(project_info.geo_transform[0]
+                + (project_info.geo_transform[1] * project_info.width as f64))
+                .to_string(),
+            &(project_info.geo_transform[3]
+                + (project_info.geo_transform[5] * project_info.height as f64))
+                .to_string(),
             &temp_topo_layer,
-            project_raster_size.0,
-            project_raster_size.1,
-            3,
-        )?;
+        ])
+        .await?;
 
-        dummy_raster.set_geo_transform(&project_geo_transform)?;
-        dummy_raster.set_projection(&project_projection)?;
-
-        for i in 1..=3 {
-            let mut band = dummy_raster.rasterband(i)?;
-            let dummy_data = vec![255u8; project_raster_size.0 * project_raster_size.1];
-            band.write(
-                (0, 0),
-                (project_raster_size.0, project_raster_size.1),
-                &mut gdal::raster::Buffer::new(
-                    (project_raster_size.0, project_raster_size.1),
-                    dummy_data,
-                ),
-            )?;
-        }
-
-        dummy_raster.close().unwrap();
-    }
-
-    let mut args = vec!["-burn", "0", "-burn", "0", "-burn", "0", "-l", &layer_name];
-
+    // Rastériser directement les géométries avec la valeur 1 (pour créer un masque)
+    let mut args = vec!["-burn", "1", "-burn", "1", "-burn", "1", "-l", &layer_name];
     if geom_type == "LineString" {
         args.push("-at");
     }
-
     args.extend_from_slice(&[topo_gpkg, &temp_topo_layer]);
 
-    let status = executor("gdal_rasterize", &args).await?.1;
+    executor("gdal_rasterize", &args).await?;
 
-    if !status.success() {
-        return Err("gdal_rasterize failed".into());
-    }
+    // Appliquer EXACTEMENT comme l'original : où topo > 0, mettre le projet à noir (0)
+    // Cette logique correspond à : if mask_value { 0 } else { base_value }
+    apply_overlay(project_file_path, &temp_topo_layer, |&value| value > 0)?;
 
-    let output_file = format!("{}/output.tif", temp_dir().to_string_lossy());
-
-    {
-        let driver_manager = DriverManager::get_driver_by_name("GTiff")?;
-        let mut output_dataset = driver_manager.create(
-            &output_file,
-            project_raster_size.0,
-            project_raster_size.1,
-            4,
-        )?;
-
-        output_dataset.set_geo_transform(&project_geo_transform)?;
-        output_dataset.set_projection(&project_projection)?;
-
-        let project = Dataset::open(project_file_path)?;
-        let topo_raster = Dataset::open(&temp_topo_layer)?;
-
-        let base_data = [
-            project.rasterband(1)?,
-            project.rasterband(2)?,
-            project.rasterband(3)?,
-            project.rasterband(4)?,
-        ];
-
-        let overlay_data = [
-            topo_raster.rasterband(1)?,
-            topo_raster.rasterband(2)?,
-            topo_raster.rasterband(3)?,
-        ];
-
-        let mut mask = vec![false; project_raster_size.0 * project_raster_size.1];
-        for band in &overlay_data {
-            let band_data: Vec<u8> = band
-                .read_as::<u8>(
-                    (0, 0),
-                    (project_raster_size.0, project_raster_size.1),
-                    (project_raster_size.0, project_raster_size.1),
-                    None,
-                )?
-                .data()
-                .to_vec();
-            for (i, &value) in band_data.iter().enumerate() {
-                if value != 255 {
-                    mask[i] = true;
-                }
-            }
-        }
-
-        for (i, base_band) in base_data.iter().enumerate() {
-            let mut out_band = output_dataset.rasterband(i + 1)?;
-            let base_band_data: Vec<u8> = base_band
-                .read_as::<u8>(
-                    (0, 0),
-                    (project_raster_size.0, project_raster_size.1),
-                    (project_raster_size.0, project_raster_size.1),
-                    None,
-                )?
-                .data()
-                .to_vec();
-
-            let data = if i < 3 {
-                base_band_data
-                    .iter()
-                    .zip(mask.iter())
-                    .map(
-                        |(&base_value, &mask_value)| {
-                            if mask_value { 0 } else { base_value }
-                        },
-                    )
-                    .collect::<Vec<u8>>()
-            } else {
-                base_band_data
-            };
-
-            out_band.write(
-                (0, 0),
-                (project_raster_size.0, project_raster_size.1),
-                &mut gdal::raster::Buffer::new(
-                    (project_raster_size.0, project_raster_size.1),
-                    data,
-                ),
-            )?;
-        }
-
-        output_dataset.close().unwrap();
-        topo_raster.close().unwrap();
-        project.close().unwrap();
-    }
-
-    std::fs::rename(output_file, project_file_path)?;
     std::fs::remove_file(&temp_topo_layer)?;
-
     Ok(())
 }
 
-/// Ajoute les couches au projet.
-/// Cette fonction est responsable de l'ajout des couches régionales, de végétation, de RPG et topographiques
-/// au projet en utilisant les chemins fournis.
-/// Elle émet également des événements de mise à jour de progression pour informer l'utilisateur
-/// de l'état d'avancement de l'ajout des couches.
-///
-/// # Arguments
-///
-/// * `app_handle` - Handle de l'application Tauri
-/// * `project_folder` - chemin du dossier du projet
-/// * `project_file_path` - chemin du fichier projet
-/// * `project_name` - nom du projet
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
-pub async fn add_layers(project_file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    emit_progress("Ajout des Couches|Ajout de la couche régionale|1/4");
+pub mod prelude {
+    pub use super::{
+        RasterInfo, add_layers, add_regional_layer, add_rpg_layer, add_topo_layer,
+        add_vegetation_layer, get_raster_info, prepare_layers,
+    };
+}
 
-    let project_file_path_obj = Path::new(project_file_path);
-    let project_folder = project_file_path_obj
-        .parent()
-        .ok_or("Invalid project_file_path: no parent directory")?
-        .to_string_lossy()
-        .to_string();
-    let project_name = project_file_path_obj
-        .file_stem()
-        .ok_or("Invalid project_file_path: no file stem")?
-        .to_string_lossy()
+pub async fn get_raster_info(file_path: &str) -> Result<RasterInfo, Box<dyn std::error::Error>> {
+    let output = executor("gdalinfo", &["-json", file_path]).await?.0;
+    let info: serde_json::Value = serde_json::from_str(&output)?;
+
+    let size = info["size"].as_array().ok_or("No size info")?;
+    let width = size[0].as_u64().ok_or("Invalid width")? as usize;
+    let height = size[1].as_u64().ok_or("Invalid height")? as usize;
+
+    let geo_transform = info["geoTransform"]
+        .as_array()
+        .ok_or("No geotransform")?
+        .iter()
+        .map(|v| v.as_f64().ok_or("Invalid geotransform value"))
+        .collect::<Result<Vec<f64>, _>>()?;
+
+    let projection = info["coordinateSystem"]["wkt"]
+        .as_str()
+        .ok_or("No projection info")?
         .to_string();
 
-    if let Err(e) = add_regional_layer(
-        project_file_path,
-        &format!("{project_folder}/resources/{project_name}.gpkg"),
-    )
-    .await
-    {
-        println!("Failed to add regional layer: {e:?}");
-        return Err(e);
-    }
-
-    let mut layers: BTreeMap<i8, Vec<&str>> = BTreeMap::new();
-    layers.insert(1, vec!["FORMATION_VEGETALE"]);
-    layers.insert(2, vec!["PARCELLES_GRAPHIQUES"]);
-    layers.insert(
-        3,
-        vec![
-            "AERODROME",
-            "CONSTRUCTION_SURFACIQUE",
-            "EQUIPEMENT_DE_TRANSPORT",
-            "RESERVOIR",
-            "TERRAIN_DE_SPORT",
-            "TRONCON_DE_VOIE_FERREE",
-            "ZONE_D_ESTRAN",
-            "BATIMENT",
-            "COURS_D_EAU",
-            "PLAN_D_EAU",
-            "SURFACE_HYDROGRAPHIQUE",
-            "TRONCON_DE_ROUTE",
-            "VOIE_NOMMEE",
-        ],
-    );
-
-    let mut layer_index = 2;
-    let total_layer_types = layers.len() + 1;
-
-    for (key, value) in layers {
-        let layer_type = match key {
-            1 => "Végétation",
-            2 => "Parcelles agricoles",
-            3 => "Topographie",
-            _ => "Inconnu",
-        };
-
-        emit_progress(&format!(
-            "Ajout des Couches|Ajout des couches {layer_type}|{layer_index}/{total_layer_types}"
-        ));
-
-        let total_files = value.len();
-        for (file_index, file) in value.iter().enumerate() {
-            emit_progress(&format!(
-                "Ajout des Couches|Ajout de {file}|{}/{total_files}",
-                file_index + 1
-            ));
-
-            let layer_path = format!("{project_folder}/resources/{file}.gpkg");
-            match key {
-                1 => add_vegetation_layer(project_file_path, &layer_path).await,
-                2 => add_rpg_layer(project_file_path, &layer_path).await,
-                3 => add_topo_layer(project_file_path, &layer_path).await,
-                _ => {
-                    println!("Unknown layer type");
-                    return Err(Box::new(std::io::Error::other("Unknown layer type")));
-                }
-            }?
-        }
-
-        layer_index += 1;
-    }
-
-    Ok(())
+    Ok(RasterInfo {
+        width,
+        height,
+        geo_transform,
+        projection,
+    })
 }
 
-/// Télécharge une image satellite JPEG pour une étendue donnée avec une résolution de 10m/pixel
-/// Cette fonction utilise le service WMS de geoportail pour télécharger une image satellite
-/// et utilise ImageMagick pour traiter l'image.
-///
-/// # Arguments
-///
-/// * `output_jpg_path` - chemin de sortie pour l'image JPEG
-/// * `project_bb` - BoundingBox de l'étendue du projet
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si le téléchargement a réussi ou échoué
-pub async fn download_satellite_jpeg(
-    output_jpg_path: &str,
-    project_bb: &BoundingBox,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let wms_cache_dir = format!("{}/wms_cache", cache_dir().to_string_lossy());
-    create_directory_if_not_exists(&wms_cache_dir)?;
-
-    let resolution = resolution();
-    let width = ((project_bb.xmax - project_bb.xmin) / resolution).ceil() as usize;
-    let height = ((project_bb.ymax - project_bb.ymin) / resolution).ceil() as usize;
-
-    println!("Dimensions calculées : largeur={width}, hauteur={height} pixels");
-
-    let cache_key = format!(
-        "{:.6}_{:.6}_{:.6}_{:.6}_{}x{}",
-        project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
-    );
-    let cache_file = format!("{wms_cache_dir}/satellite_{cache_key}.jpg");
-
-    if Path::new(&cache_file).exists() {
-        if let Ok(metadata) = fs::metadata(&cache_file)
-            && metadata.len() > 0
-        {
-            fs::copy(&cache_file, output_jpg_path)?;
-            println!(
-                "Image satellite récupérée depuis le cache: {} bytes",
-                metadata.len()
-            );
-            return Ok(());
-        }
-        let _ = fs::remove_file(&cache_file);
-    }
-
-    let wms_url = format!(
-        "https://data.geopf.fr/wms-r/wms?\
-        SERVICE=WMS&\
-        VERSION=1.3.0&\
-        REQUEST=GetMap&\
-        LAYERS=ORTHOIMAGERY.ORTHOPHOTOS&\
-        STYLES=&\
-        CRS=EPSG:2154&\
-        BBOX={},{},{},{}&\
-        WIDTH={}&\
-        HEIGHT={}&\
-        FORMAT=image/jpeg",
-        project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
-    );
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .user_agent("Rust WMS Client")
-        .build()?;
-
-    let mut success = false;
-    let mut attempts = 0;
-    let max_attempts = 3;
-    let mut image_data = Vec::new();
-
-    while !success && attempts < max_attempts {
-        attempts += 1;
-        println!("Tentative de téléchargement {attempts}/{max_attempts}");
-
-        match download_attempt(&client, &wms_url).await {
-            Ok(data) => {
-                if data.is_empty() {
-                    return Err("Le fichier téléchargé est vide".into());
-                }
-
-                image_data = data;
-                success = true;
-            }
-            Err(e) => {
-                println!("Tentative {} échouée: {}", attempts, e);
-                if attempts < max_attempts {
-                    println!("Nouvelle tentative dans 5 secondes...");
-                    sleep(Duration::from_secs(5)).await;
-                }
-            }
-        }
-    }
-
-    if !success {
-        return Err(
-            "Échec du téléchargement de l'image satellite après plusieurs tentatives".into(),
-        );
-    }
-
-    let temp_cache_file = format!("{}.tmp", cache_file);
-    fs::write(&temp_cache_file, &image_data)?;
-    fs::rename(&temp_cache_file, &cache_file)?;
-
-    fs::copy(&cache_file, output_jpg_path)?;
-
-    if !Path::new(&output_jpg_path).exists() {
-        return Err("Échec de l'écriture du fichier final".into());
-    }
-
-    if let Ok(metadata) = fs::metadata(output_jpg_path)
-        && metadata.len() == 0
-    {
-        return Err("Le fichier final est vide".into());
-    }
-
-    println!(
-        "Image satellite téléchargée avec succès: {} bytes",
-        image_data.len()
-    );
-    Ok(())
-}
-
-async fn download_attempt(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let response = client.get(url).send().await?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()).into());
-    }
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|ct| ct.to_str().ok())
-        .unwrap_or("");
-
-    if !content_type.starts_with("image/") {
-        let error_text = response.text().await?;
-        return Err(format!(
-            "Server returned error response: {}",
-            error_text.chars().take(200).collect::<String>()
-        )
-        .into());
-    }
-
-    let image_data = response.bytes().await?;
-
-    if image_data.len() < 10 || image_data[0] != 0xFF || image_data[1] != 0xD8 {
-        return Err("Downloaded data is not a valid JPEG image".into());
-    }
-
-    Ok(image_data.to_vec())
+#[derive(Debug)]
+pub struct RasterInfo {
+    width: usize,
+    height: usize,
+    geo_transform: Vec<f64>,
+    projection: String,
 }

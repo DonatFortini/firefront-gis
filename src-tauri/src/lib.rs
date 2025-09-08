@@ -1,14 +1,14 @@
 use std::fs::create_dir_all;
 
-use commands::{
-    clear_cache, create_project_com, delete_project, export, get_os, get_project_data,
-    get_projects, get_settings, save_settings,
-};
+use commands::*;
 
 use tauri::AppHandle;
 use utils::resolve_resource_dir;
 
-use crate::{commands::load_regions_graph, config::AppConfig};
+use crate::{
+    commands::{load_regions_graph, projects::get_projects},
+    config::AppConfig,
+};
 
 pub mod commands;
 pub mod config;
@@ -53,7 +53,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            create_project_com,
+            create_project,
             get_projects,
             get_os,
             export,

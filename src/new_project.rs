@@ -206,7 +206,7 @@ pub fn new_project(props: &NewProjectProps) -> Html {
 
             spawn_local(async move {
                 let serialized_args = serde_wasm_bindgen::to_value(&args).unwrap();
-                let result = invoke("create_project_com", serialized_args).await;
+                let result = invoke("create_project", serialized_args).await;
 
                 if let Err(e) = serde_wasm_bindgen::from_value::<()>(result) {
                     web_sys::console::log_1(&format!("Error: {e:?}").into());

@@ -4,8 +4,8 @@ use common::*;
 
 use firefront_gis_lib::{
     gis_operation::{
-        clip_to_bb, convert_to_gpkg, create_project, create_region_geojson, fusion_datasets,
-        layers::download_satellite_jpeg,
+        clip_to_bb, convert_to_gpkg, create_reference_raster, create_region_geojson,
+        fetch_orthophoto_wms, fusion_datasets,
     },
     utils::{create_directory_if_not_exists, export_to_jpg, extract_files_by_name},
 };
@@ -18,7 +18,7 @@ async fn test_project_creation() {
     remove_file_if_exists(project_path);
 
     let bbox = get_test_bounding_box();
-    let result = create_project(project_path, &bbox).await;
+    let result = create_reference_raster(project_path, &bbox).await;
     assert_result_ok(&result, "Failed to create project");
     assert_file_exists(project_path, "Project file not created");
 
@@ -134,7 +134,7 @@ async fn test_satellite_download_and_compare() {
     let vegetation_jpg = "tests/res/test1_vegetation.jpg";
     let bounding_box = get_test_bounding_box();
 
-    let result = download_satellite_jpeg(satellite_jpg, &bounding_box).await;
+    let result = fetch_orthophoto_wms(satellite_jpg, &bounding_box).await;
     assert_result_ok(&result, "Failed to download satellite JPEG");
     assert_file_exists(satellite_jpg, "Satellite JPEG not created");
     check_jpeg_properties(satellite_jpg, 10.0, "Satellite JPEG");

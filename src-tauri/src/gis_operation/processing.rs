@@ -196,3 +196,7 @@ where
 
     Ok(())
 }
+
+pub mod prelude {
+    pub use super::{apply_overlay, rasterize_layer};
+}

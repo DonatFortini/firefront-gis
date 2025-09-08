@@ -1,27 +1,29 @@
+use geo::{Geometry, Intersects, Relate};
+use geojson::GeoJson;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self};
 use std::path::Path;
 
-use geo::{Geometry, Intersects, Relate};
-use geojson::GeoJson;
-
-use crate::types::Driver;
-use crate::types::GTiff;
-use crate::types::regions::get_region;
-use crate::types::{BoundingBox, Region};
+use crate::types::{BoundingBox, Driver, GTiff, Region, get_region};
 use crate::utils::{executor, resolution, resource_dir};
 
 pub mod layers;
 pub mod processing;
 pub mod slicing;
+pub mod wms_layer;
 
-/// Crée un projet de carte avec une résolution donnée (10m/pixel)
+pub use layers::prelude::*;
+pub use processing::prelude::*;
+pub use slicing::prelude::*;
+pub use wms_layer::prelude::*;
+
+/// Crée un fichier raster de référence avec une résolution donnée (10m/pixel)
 /// et calcule la taille de l'image en fonction de la boîte englobante
 ///
 /// # Arguments
 ///
-/// * `project_file_path` - chemin du fichier projet
+/// * `output_raster_path` - chemin du fichier raster de sortie
 /// * `project_bb` - coordonnées de la boîte englobante du projet
 ///
 /// # Returns
@@ -33,11 +35,11 @@ pub mod slicing;
 ///
 /// ```rust
 ///
-/// use crate::gis_processing::create_project;
+/// use crate::gis_processing::create_reference_raster;
 /// use crate::utils::BoundingBox;
 ///
 ///
-/// let project_file_path = "path/to/project.tif";
+/// let output_raster_path = "path/to/reference.tif";
 ///
 /// let project_bb = BoundingBox {
 ///     xmin: 1210000.0,
@@ -46,12 +48,12 @@ pub mod slicing;
 ///     ymax: 6095000.0,
 /// };
 ///
-/// create_project(project_file_path, &project_bb).unwrap();
+/// create_reference_raster(output_raster_path, &project_bb).unwrap();
 ///
 ///```
 ///
 ///
-pub async fn create_project(
+pub async fn create_reference_raster(
     project_file_path: &str,
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -226,11 +228,7 @@ pub async fn clip_to_bb(
         "YES",
     ];
 
-    let status = executor("ogr2ogr", &args).await?.1;
-
-    if !status.success() {
-        return Err("Failed to clip GeoPackage".into());
-    }
+    executor("ogr2ogr", &args).await?;
 
     Ok(())
 }
@@ -308,18 +306,9 @@ pub async fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<
         return Ok(true);
     }
 
-    println!("Building regions graph from GeoJSON file");
-
     let regional_geojson_path = resource_dir().join("regions.geojson");
-    let metadata = fs::metadata(&regional_geojson_path)?;
-    println!("GeoJSON file size: {} MB", metadata.len() / 1024 / 1024);
-
-    println!("Reading GeoJSON file...");
     let geojson_str = fs::read_to_string(&regional_geojson_path)?;
-    println!("File read successfully, parsing...");
-
     let geojson: GeoJson = geojson_str.parse()?;
-    println!("GeoJSON parsed successfully");
 
     let feature_collection = match geojson {
         GeoJson::FeatureCollection(fc) => fc,
@@ -362,16 +351,10 @@ pub async fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<
             Region::new(code.to_string(), name.to_string(), gdal_geom),
         );
     }
-    println!(
-        "\rProgress: {}/{} features parsed (100.0%)",
-        total_features, total_features
-    );
 
     let region_codes: Vec<String> = regions_info.keys().cloned().collect();
     let total_comparisons = (region_codes.len() * (region_codes.len() - 1)) / 2;
     let mut comparisons_done = 0;
-
-    println!("\nBuilding neighbor relationships...");
 
     for i in 0..region_codes.len() {
         let code_i = &region_codes[i];
@@ -404,14 +387,8 @@ pub async fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<
             }
         }
     }
-    println!(
-        "\rProgress: {}/{} comparisons (100.0%)",
-        total_comparisons, total_comparisons
-    );
 
-    println!("output file: {:?}", output_file);
     if let Some(path) = output_file {
-        println!("Saving regions graph to: {path}");
         let json_str = serde_json::to_string_pretty(&regions_info)?;
         fs::write(path, json_str)?;
         println!("Regions graph saved to: {path}");
