@@ -1,15 +1,31 @@
+use std::fs::create_dir_all;
+
 use commands::{
     clear_cache, create_project_com, delete_project, export, get_os, get_project_data,
     get_projects, get_settings, save_settings,
 };
-use config::initialize_app;
-use tauri::Manager;
+
+use tauri::AppHandle;
+use utils::resolve_resource_dir;
+
+use crate::{commands::load_regions_graph, config::AppConfig};
 
 pub mod commands;
 pub mod config;
 pub mod fetch_resources;
 pub mod gis_operation;
+pub mod types;
 pub mod utils;
+
+fn initialize_app(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    AppConfig::init(app_handle.clone())?;
+    Ok(AppConfig::with_write(|config| {
+        for dir_path in [&config.cache_dir, &config.temp_dir, &config.projects_dir] {
+            create_dir_all(dir_path)?;
+        }
+        Ok(())
+    })?)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,9 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle();
-            let res_dir = app_handle
-                .path()
-                .resolve("resources", tauri::path::BaseDirectory::Resource)?;
+            let res_dir = resolve_resource_dir(app_handle, "resources")?;
             unsafe {
                 std::env::set_var("PROJ_LIB", res_dir.join("proj").to_str().unwrap());
                 std::env::set_var("GDAL_DATA", res_dir.join("gdal").to_str().unwrap());
@@ -47,7 +61,8 @@ pub fn run() {
             get_project_data,
             get_settings,
             save_settings,
-            clear_cache
+            clear_cache,
+            load_regions_graph
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

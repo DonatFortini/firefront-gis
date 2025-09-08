@@ -1,7 +1,6 @@
 use gdal::{Dataset, DriverManager};
-use tauri_plugin_shell::ShellExt;
 
-use crate::utils::{get_handle, temp_dir};
+use crate::utils::{executor, temp_dir};
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -69,17 +68,7 @@ pub async fn rasterize_layer(
     args.push(vector_gpkg);
     args.push(output_raster);
 
-    let handle = get_handle().unwrap();
-    let status = handle
-        .shell()
-        .sidecar("gdal_rasterize")?
-        .args(args)
-        .status()
-        .await?;
-
-    if !status.success() {
-        return Err("gdal_rasterize failed".into());
-    }
+    executor("gdal_rasterize", &args).await?;
 
     Ok(())
 }

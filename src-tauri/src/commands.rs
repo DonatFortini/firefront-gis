@@ -1,30 +1,47 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::{
-    config::get_config,
-    utils::{clean_tmp, emit_progress, get_handle, temp_dir},
-};
 use tauri::command;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::fs;
 
 use crate::{
-    config,
+    config::{self, get_config},
     fetch_resources::{download_shp_file, get_shp_file_urls},
     gis_operation::{
-        create_project, fusion_datasets,
+        build_regions_graph, create_project, fusion_datasets,
         layers::{add_layers, download_satellite_jpeg, prepare_layers},
-        regions::find_intersecting_regions,
     },
+    types::{BoundingBox, regions::find_intersecting_regions},
     utils::{
-        BoundingBox, cache_dir, clean_tmp_except_gpkg, create_directory_if_not_exists,
-        export_project, export_to_jpg, get_operating_system, get_previous_projects, projects_dir,
+        cache_dir, clean_tmp, create_directory_if_not_exists, emit_progress, export_project,
+        export_to_jpg, get_handle, get_operating_system, get_previous_projects, projects_dir,
     },
 };
 
 #[command]
 pub fn get_os() -> String {
     get_operating_system().to_string()
+}
+
+/// Charge le graphe des régions. Si le fichier du graphe n'existe pas,
+/// il le construit à partir du fichier GeoJSON des régions.
+///
+/// Note : Cette fonction est appelée au démarrage de l'application et uniquement dans cet usecase.
+///
+/// # Retourne
+/// * `Result<(), String>` - Ok si le graphe est chargé ou construit avec succès
+#[tauri::command]
+pub async fn load_regions_graph() -> Result<(), String> {
+    let graph_path = get_config(|config| config.regions_graph_path());
+    if !Path::new(&graph_path).exists() {
+        println!("Regions graph file not found, building a new one...");
+        build_regions_graph(graph_path.to_str())
+            .await
+            .map_err(|e| format!("Failed to build regions graph: {e}"))?;
+    }
+    println!("Regions graph loaded successfully.");
+
+    Ok(())
 }
 
 #[command(rename_all = "snake_case")]
@@ -100,10 +117,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
     emit_progress("Initialisation du projet");
 
     let project_folder = format!("{}/{name}", projects_dir().to_string_lossy());
-    println!("project_folder: {:?}", project_folder);
     let project_file_path = format!("{project_folder}/{name}.tiff");
-    println!("cache_dir: {:?}", cache_dir());
-    println!("temp_dir: {:?}", temp_dir());
     if std::path::Path::new(&project_file_path).exists() {
         let should_overwrite = get_handle()
             .unwrap()
@@ -121,7 +135,6 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
     }
 
     emit_progress("Initialisation du projet|Création des dossiers|1/2");
-    //FIXME : problem path on build
     std::fs::create_dir_all(&project_folder).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{project_folder}/resources")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(format!("{project_folder}/slices")).map_err(|e| e.to_string())?;
@@ -146,7 +159,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
             idx + 1
         ));
 
-        if let Err(e) = clean_tmp_except_gpkg() {
+        if let Err(e) = clean_tmp(Some(".gpkg")) {
             return Err(format!(
                 "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
             ));
@@ -162,7 +175,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
             topo_gpkgs.entry(layer_name).or_default().extend(paths);
         }
 
-        if let Err(e) = clean_tmp_except_gpkg() {
+        if let Err(e) = clean_tmp(Some(".gpkg")) {
             return Err(format!(
                 "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
             ));
@@ -245,7 +258,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
         }
     }
 
-    if let Err(e) = clean_tmp_except_gpkg() {
+    if let Err(e) = clean_tmp(Some(".gpkg")) {
         return Err(format!(
             "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
         ));
@@ -283,7 +296,7 @@ pub async fn create_project_com(name: String, project_bb: BoundingBox) -> Result
 
     emit_progress("Nettoyage");
 
-    if let Err(e) = clean_tmp() {
+    if let Err(e) = clean_tmp(None) {
         return Err(format!(
             "Erreur lors du nettoyage des fichiers temporaires: {e:?}"
         ));

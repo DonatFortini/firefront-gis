@@ -1,5 +1,4 @@
-use crate::gis_operation::regions::build_regions_graph;
-use crate::utils::OUTPUT_DIR;
+use crate::utils::{OUTPUT_DIR, resolve_resource_dir};
 use rusqlite::{Connection, Result as SqliteResult, params};
 use serde::{Deserialize, Serialize};
 use std::fs::create_dir_all;
@@ -262,35 +261,6 @@ impl AppConfig {
     pub fn regions_graph_path(&self) -> PathBuf {
         self.resource_dir.join(REGIONS_GRAPH_FILE)
     }
-}
-
-fn resolve_resource_dir(app_handle: &AppHandle, resource_path: &str) -> Result<PathBuf> {
-    app_handle
-        .path()
-        .resolve(resource_path, tauri::path::BaseDirectory::Resource)
-        .map_err(|e| ConfigError::ResourcePathResolution {
-            path: resource_path.to_string(),
-            source: Box::new(e),
-        })
-}
-
-pub fn initialize_app(app_handle: &AppHandle) -> Result<()> {
-    AppConfig::init(app_handle.clone())?;
-    AppConfig::with_write(|config| {
-        for dir_path in [&config.cache_dir, &config.temp_dir, &config.projects_dir] {
-            create_dir_all(dir_path)?;
-        }
-
-        let regions_graph_path = config.regions_graph_path();
-        let regions_graph_str = regions_graph_path.to_str().ok_or_else(|| {
-            ConfigError::InvalidPath("Invalid UTF-8 in regions graph path".to_string())
-        })?;
-
-        build_regions_graph(Some(regions_graph_str))
-            .map_err(|e| ConfigError::GisOperation(e.to_string()))?;
-
-        Ok(())
-    })
 }
 
 pub fn get_config<F, R>(f: F) -> R

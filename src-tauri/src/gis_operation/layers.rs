@@ -3,17 +3,19 @@ use gdal::{Dataset, DriverManager};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
+use tokio::time::sleep;
 
-use tauri_plugin_shell::ShellExt;
-
+use super::create_region_geojson;
 use super::processing::{apply_overlay, rasterize_layer};
-use super::regions::create_region_geojson;
 use super::{clip_to_bb, convert_to_gpkg};
 
 use crate::utils::{
-    BoundingBox, cache_dir, create_directory_if_not_exists, emit_progress, extract_files_by_name,
-    get_handle, resolution, temp_dir,
+    cache_dir, create_directory_if_not_exists, emit_progress, executor, extract_files_by_name,
+    resolution, temp_dir,
 };
+
+use crate::types::BoundingBox;
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
 /// Retourne les chemins vers les fichiers GPKG pour chaque type de couche
@@ -390,6 +392,7 @@ pub async fn add_vegetation_layer(
     vegetation_raster.close().unwrap();
     apply_overlay(project_file_path, &temp_vegetation, |&value| value > 0)?;
 
+    // TODO : Clean_tmp ?
     std::fs::remove_file(&temp_vegetation)?;
     std::fs::remove_file(&temp_feuillus)?;
     std::fs::remove_file(&temp_undefined)?;
@@ -487,14 +490,7 @@ pub async fn add_topo_layer(
 
     args.extend_from_slice(&[topo_gpkg, &temp_topo_layer]);
 
-    let handle = get_handle().unwrap();
-
-    let status = handle
-        .shell()
-        .sidecar("gdal_rasterize")?
-        .args(args)
-        .status()
-        .await?;
+    let status = executor("gdal_rasterize", &args).await?.1;
 
     if !status.success() {
         return Err("gdal_rasterize failed".into());
@@ -714,8 +710,6 @@ pub async fn download_satellite_jpeg(
     output_jpg_path: &str,
     project_bb: &BoundingBox,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = temp_dir().to_string_lossy().to_string();
-
     let wms_cache_dir = format!("{}/wms_cache", cache_dir().to_string_lossy());
     create_directory_if_not_exists(&wms_cache_dir)?;
 
@@ -725,83 +719,71 @@ pub async fn download_satellite_jpeg(
 
     println!("Dimensions calculées : largeur={width}, hauteur={height} pixels");
 
-    let temp_satellite = format!("{temp_dir}/satellite_temp.tif");
-    let wms_file = format!("{temp_dir}/wms_config.xml");
-    let wms_xml = format!(
-        r#"<GDAL_WMS>
-      <Service name="WMS">
-        <Version>1.3.0</Version>
-        <ServerUrl>https://data.geopf.fr/wms-r/wms</ServerUrl>
-        <CRS>EPSG:2154</CRS>
-        <ImageFormat>image/jpeg</ImageFormat>
-        <Layers>ORTHOIMAGERY.ORTHOPHOTOS</Layers>
-        <Styles></Styles>
-      </Service>
-      <DataWindow>
-        <UpperLeftX>{}</UpperLeftX>
-        <UpperLeftY>{}</UpperLeftY>
-        <LowerRightX>{}</LowerRightX>
-        <LowerRightY>{}</LowerRightY>
-        <SizeX>{}</SizeX>
-        <SizeY>{}</SizeY>
-      </DataWindow>
-      <BandsCount>3</BandsCount>
-      <BlockSizeX>2048</BlockSizeX>
-      <BlockSizeY>2048</BlockSizeY>
-      <OverviewCount>0</OverviewCount>
-      <ZeroBlockHttpCodes>204,400,404,502,503,504</ZeroBlockHttpCodes>
-      <MaxConnections>10</MaxConnections>
-      <Timeout>120</Timeout>
-      <Cache>
-        <Type>Disk</Type>
-        <Path>{}/wms_cache</Path>
-        <MaxSize>500000000</MaxSize>
-      </Cache>
-      <UserAgent>GDAL WMS driver (https://gdal.org/drivers/raster/wms.html)</UserAgent>
-      <UnsafeSSL>true</UnsafeSSL>
-      <Retry>
-        <Count>5</Count>
-        <Delay>1</Delay>
-      </Retry>
-    </GDAL_WMS>"#,
-        project_bb.xmin, project_bb.ymax, project_bb.xmax, project_bb.ymin, width, height, temp_dir
+    let cache_key = format!(
+        "{:.6}_{:.6}_{:.6}_{:.6}_{}x{}",
+        project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
+    );
+    let cache_file = format!("{wms_cache_dir}/satellite_{cache_key}.jpg");
+
+    if Path::new(&cache_file).exists() {
+        if let Ok(metadata) = fs::metadata(&cache_file)
+            && metadata.len() > 0
+        {
+            fs::copy(&cache_file, output_jpg_path)?;
+            println!(
+                "Image satellite récupérée depuis le cache: {} bytes",
+                metadata.len()
+            );
+            return Ok(());
+        }
+        let _ = fs::remove_file(&cache_file);
+    }
+
+    let wms_url = format!(
+        "https://data.geopf.fr/wms-r/wms?\
+        SERVICE=WMS&\
+        VERSION=1.3.0&\
+        REQUEST=GetMap&\
+        LAYERS=ORTHOIMAGERY.ORTHOPHOTOS&\
+        STYLES=&\
+        CRS=EPSG:2154&\
+        BBOX={},{},{},{}&\
+        WIDTH={}&\
+        HEIGHT={}&\
+        FORMAT=image/jpeg",
+        project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
     );
 
-    std::fs::write(wms_file.clone(), wms_xml)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .user_agent("Rust WMS Client")
+        .build()?;
 
     let mut success = false;
     let mut attempts = 0;
     let max_attempts = 3;
+    let mut image_data = Vec::new();
 
     while !success && attempts < max_attempts {
         attempts += 1;
         println!("Tentative de téléchargement {attempts}/{max_attempts}");
-        if let Ok(wms_dataset) = Dataset::open(&wms_file) {
-            let driver = DriverManager::get_driver_by_name("GTiff")?;
-            let (width, height) = (wms_dataset.raster_size().0, wms_dataset.raster_size().1);
-            let mut out_ds =
-                driver.create(&temp_satellite, width, height, wms_dataset.raster_count())?;
-            out_ds.set_geo_transform(&wms_dataset.geo_transform()?)?;
-            out_ds.set_projection(&wms_dataset.projection())?;
-            for band_index in 1..=wms_dataset.raster_count() {
-                let in_band = wms_dataset.rasterband(band_index)?;
-                let mut out_band = out_ds.rasterband(band_index)?;
-                let data: Vec<u8> = in_band
-                    .read_as::<u8>((0, 0), (width, height), (width, height), None)?
-                    .data()
-                    .to_vec();
-                out_band.write(
-                    (0, 0),
-                    (width, height),
-                    &mut gdal::raster::Buffer::new((width, height), data),
-                )?;
+
+        match download_attempt(&client, &wms_url).await {
+            Ok(data) => {
+                if data.is_empty() {
+                    return Err("Le fichier téléchargé est vide".into());
+                }
+
+                image_data = data;
+                success = true;
             }
-            out_ds.close().unwrap();
-            wms_dataset.close().unwrap();
-            success = true;
-        } else if attempts < max_attempts {
-            println!("Échec, nouvelle tentative dans 5 secondes...");
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            Err(e) => {
+                println!("Tentative {} échouée: {}", attempts, e);
+                if attempts < max_attempts {
+                    println!("Nouvelle tentative dans 5 secondes...");
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
         }
     }
 
@@ -811,47 +793,59 @@ pub async fn download_satellite_jpeg(
         );
     }
 
-    let metadata = fs::metadata(&temp_satellite)?;
-    if metadata.len() == 0 {
-        return Err("Le fichier téléchargé est vide".into());
+    let temp_cache_file = format!("{}.tmp", cache_file);
+    fs::write(&temp_cache_file, &image_data)?;
+    fs::rename(&temp_cache_file, &cache_file)?;
+
+    fs::copy(&cache_file, output_jpg_path)?;
+
+    if !Path::new(&output_jpg_path).exists() {
+        return Err("Échec de l'écriture du fichier final".into());
     }
 
-    let temp_jpg = format!("{temp_dir}/satellite_temp.jpg");
+    if let Ok(metadata) = fs::metadata(output_jpg_path)
+        && metadata.len() == 0
+    {
+        return Err("Le fichier final est vide".into());
+    }
 
-    let app_handle = get_handle().unwrap();
+    println!(
+        "Image satellite téléchargée avec succès: {} bytes",
+        image_data.len()
+    );
+    Ok(())
+}
 
-    let input_satellite = app_handle
-        .shell()
-        .sidecar("magick")?
-        .args([
-            "convert",
-            &temp_satellite,
-            "-strip",
-            "-resize",
-            &format!("{width}x{height}"),
-            "-quality",
-            "90",
-            &temp_jpg,
-        ])
-        .output()
-        .await?;
+async fn download_attempt(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let response = client.get(url).send().await?;
 
-    if !input_satellite.status.success() {
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()).into());
+    }
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|ct| ct.to_str().ok())
+        .unwrap_or("");
+
+    if !content_type.starts_with("image/") {
+        let error_text = response.text().await?;
         return Err(format!(
-            "Erreur lors de la conversion de l'image satellite en JPEG: {}",
-            String::from_utf8_lossy(&input_satellite.stderr)
+            "Server returned error response: {}",
+            error_text.chars().take(200).collect::<String>()
         )
         .into());
     }
 
-    if Path::new(&temp_jpg).exists() {
-        std::fs::rename(temp_jpg, output_jpg_path)?;
-    } else {
-        return Err("Le fichier JPEG temporaire n'a pas été créé".into());
+    let image_data = response.bytes().await?;
+
+    if image_data.len() < 10 || image_data[0] != 0xFF || image_data[1] != 0xD8 {
+        return Err("Downloaded data is not a valid JPEG image".into());
     }
 
-    std::fs::remove_file(temp_satellite)?;
-    std::fs::remove_file(wms_file)?;
-
-    Ok(())
+    Ok(image_data.to_vec())
 }

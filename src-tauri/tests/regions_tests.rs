@@ -2,15 +2,14 @@ mod common;
 
 use common::*;
 use firefront_gis_lib::{
-    gis_operation::regions::{
-        build_regions_graph, find_intersecting_regions, get_neighbors, get_region,
-    },
-    utils::BoundingBox,
+    gis_operation::build_regions_graph,
+    types::BoundingBox,
+    types::regions::{find_intersecting_regions, get_neighbors, get_region},
 };
 
-#[test]
-fn test_build_regions_graph() {
-    let result = build_regions_graph(Some("resources/regions_graph.json"));
+#[tokio::test]
+async fn test_build_regions_graph() {
+    let result = build_regions_graph(Some("resources/regions_graph.json")).await;
     assert_result_ok(&result, "Building regions graph failed");
 }
 

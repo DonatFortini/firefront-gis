@@ -1,4 +1,4 @@
-use firefront_gis_lib::utils::BoundingBox;
+use firefront_gis_lib::types::BoundingBox;
 use gdal::Dataset;
 use std::fs;
 use std::path::Path;

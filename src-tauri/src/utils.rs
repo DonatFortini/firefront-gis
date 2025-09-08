@@ -1,116 +1,15 @@
-use crate::config::get_config;
-use geo::Geometry;
-use geo_types::Error as GeoError;
+use crate::config::{ConfigError, get_config};
 use lazy_static::lazy_static;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
-use tauri::Emitter;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
-use wkt::{ToWkt, Wkt};
 
 use crate::gis_operation::slicing::slice_images;
-use geo_types::{Coord, Polygon};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
-pub struct BoundingBox {
-    pub xmin: f64,
-    pub ymin: f64,
-    pub xmax: f64,
-    pub ymax: f64,
-}
-
-impl BoundingBox {
-    pub fn new(xmin: f64, ymin: f64, xmax: f64, ymax: f64) -> Self {
-        BoundingBox {
-            xmin,
-            ymin,
-            xmax,
-            ymax,
-        }
-    }
-
-    pub fn width(&self) -> f64 {
-        self.xmax - self.xmin
-    }
-
-    pub fn height(&self) -> f64 {
-        self.ymax - self.ymin
-    }
-
-    pub fn to_wkt(&self) -> Wkt<f64> {
-        let coords = vec![
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-        ];
-
-        let polygon = Polygon::new(coords.into(), vec![]);
-        polygon.to_wkt()
-    }
-
-    pub fn to_geometry(&self) -> Result<Geometry, GeoError> {
-        let coords = vec![
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-        ];
-
-        let polygon = Polygon::new(coords.into(), vec![]);
-        Ok(Geometry::from(polygon))
-    }
-
-    pub fn intersects(&self, other: &BoundingBox) -> bool {
-        self.xmin < other.xmax
-            && self.xmax > other.xmin
-            && self.ymin < other.ymax
-            && self.ymax > other.ymin
-    }
-
-    pub fn contains(&self, other: &BoundingBox) -> bool {
-        self.xmin <= other.xmin
-            && self.xmax >= other.xmax
-            && self.ymin <= other.ymin
-            && self.ymax >= other.ymax
-    }
-}
+use crate::types::BoundingBox;
 
 lazy_static! {
     pub static ref RPG_DEP: HashMap<&'static str, Vec<&'static str>> = HashMap::from([
@@ -182,32 +81,39 @@ pub fn create_directory_if_not_exists(path: &str) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+pub async fn executor(
+    command: &str,
+    args: &[&str],
+) -> Result<(String, tauri_plugin_shell::process::ExitStatus), Box<dyn Error>> {
+    let app_handle = get_handle().unwrap();
+    let output = app_handle
+        .shell()
+        .sidecar(command)?
+        .args(args)
+        .output()
+        .await?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Failed to execute {command} command. Status: {:?}\nStdout: {}\nStderr: {}",
+            output.status, stdout, stderr
+        )
+        .into());
+    }
+
+    Ok((stdout, output.status))
+}
+
 pub async fn compress_folder(
     source_folder_path: &str,
     output_zip_name: &str,
     destination_directory: &str,
 ) -> Result<(), Box<dyn Error>> {
     let output_zip_path = format!("{destination_directory}/{output_zip_name}.zip");
-    let app_handle = get_handle().unwrap();
-
-    let output = app_handle
-        .shell()
-        .sidecar("_7z")?
-        .args(["a", &output_zip_path, "."])
-        .current_dir(source_folder_path)
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Failed to execute 7z command. Status: {:?}\nStdout: {}\nStderr: {}",
-            output.status, stdout, stderr
-        )
-        .into());
-    }
-
+    executor("_7z", &["a", &output_zip_path, "."]).await?;
     println!("Successfully compressed folder '{source_folder_path}' to '{output_zip_path}'");
     Ok(())
 }
@@ -217,51 +123,40 @@ pub async fn extract_files_by_name(
     target_filename: &str,
     output_dir: &str,
 ) -> Result<(), Box<dyn Error>> {
-    create_directory_if_not_exists(output_dir)?;
-    let temp_extract_dir = Path::new(output_dir).join("temp_extract");
-    create_directory_if_not_exists(temp_extract_dir.to_str().unwrap())?;
+    let output_path = Path::new(output_dir);
+    let temp_extract_dir = output_path.join("temp_extract");
 
-    let app_handle = get_handle().unwrap();
-    let extract_output = app_handle
-        .shell()
-        .sidecar("_7z")?
-        .args([
+    fs::create_dir_all(output_path)?;
+    fs::create_dir_all(&temp_extract_dir)?;
+
+    executor(
+        "_7z",
+        &[
             "x",
             archive_path,
-            &format!("-o{}", temp_extract_dir.to_str().unwrap()),
-        ])
-        .output()
-        .await?;
-
-    if !extract_output.status.success() {
-        let stderr = String::from_utf8_lossy(&extract_output.stderr);
-        let stdout = String::from_utf8_lossy(&extract_output.stdout);
-        return Err(format!(
-            "Failed to execute 7z command. Status: {:?}\nStdout: {}\
-            \nStderr: {}",
-            extract_output.status, stdout, stderr
-        )
-        .into());
-    }
-
-    let destination = Path::new(output_dir).join(target_filename);
-    create_directory_if_not_exists(destination.to_str().unwrap())?;
+            &format!("-o{}", temp_extract_dir.display()),
+        ],
+    )
+    .await?;
 
     let mut found_files = Vec::new();
     find_files_by_basename(&temp_extract_dir, target_filename, &mut found_files)?;
 
     if found_files.is_empty() {
+        fs::remove_dir_all(&temp_extract_dir)?;
         return Err(format!("No files matching '{target_filename}' found in archive").into());
     }
 
-    for file_path in &found_files {
-        let file_name = file_path.file_name().unwrap();
-        let dest_path = destination.join(file_name);
-        fs::copy(file_path, dest_path)?;
+    let destination = output_path.join(target_filename);
+    fs::create_dir_all(&destination)?;
+
+    for file_path in found_files {
+        if let Some(file_name) = file_path.file_name() {
+            fs::copy(&file_path, destination.join(file_name))?;
+        }
     }
 
     fs::remove_dir_all(temp_extract_dir)?;
-
     Ok(())
 }
 
@@ -304,7 +199,7 @@ pub fn get_previous_projects() -> Result<HashMap<String, Vec<String>>, Box<dyn E
         if path.is_dir()
             && let Some(project_name) = path.file_name().and_then(|n| n.to_str())
         {
-            let project_path = in_project_dir(project_name);
+            let project_path = projects_dir().join(project_name);
             let preview_image_path = project_path.join(format!("{project_name}_ORTHO.jpeg"));
             projects.insert(
                 project_name.to_string(),
@@ -372,30 +267,18 @@ pub async fn export_to_jpg(
     project_file_path: &str,
     output_jpg_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let app_handle = get_handle().unwrap();
-    let output = app_handle
-        .shell()
-        .sidecar("magick")?
-        .args([
+    executor(
+        "magick",
+        &[
             "convert",
             project_file_path,
             "-strip",
             "-quality",
             "90",
             output_jpg_path,
-        ])
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "Failed to execute ImageMagick command. Status: {:?}\nStdout: {}\nStderr: {}",
-            output.status, stdout, stderr
-        )
-        .into());
-    }
+        ],
+    )
+    .await?;
 
     Ok(())
 }
@@ -404,20 +287,12 @@ pub async fn get_project_bounding_box(
     project_name: &str,
 ) -> Result<BoundingBox, Box<dyn std::error::Error>> {
     let project_path = format!("{}/{}/", projects_dir().to_string_lossy(), project_name);
-    let handle = get_handle().unwrap();
 
-    let output = handle
-        .shell()
-        .sidecar("gdalinfo")?
-        .args([
-            format!("{project_path}{project_name}.tiff"),
-            "-json".to_owned(),
-        ])
-        .output()
-        .await?;
+    let tiff_path = format!("{project_path}{project_name}.tiff");
+    let output = executor("gdalinfo", &[&tiff_path, "-json"]).await?;
 
     let json_output: Value =
-        serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {e}"))?;
+        serde_json::from_str(&output.0).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     let corner_coordinates = json_output["cornerCoordinates"].as_object().unwrap();
 
@@ -432,15 +307,9 @@ pub async fn get_project_bounding_box(
 pub async fn get_geojson_bounding_box(
     file_path: &str,
 ) -> Result<BoundingBox, Box<dyn std::error::Error>> {
-    let handle = get_handle().unwrap();
-    let output = handle
-        .shell()
-        .sidecar("ogrinfo")?
-        .args(["-so", "-al", file_path])
-        .output()
-        .await?;
+    let output = executor("ogrinfo", &["-so", "-al", file_path]).await?;
 
-    let info_str = String::from_utf8(output.stdout)?;
+    let info_str = String::from_utf8(output.0.into())?;
 
     let extent_pattern = r"Extent:\s*\(([\d.-]+),\s*([\d.-]+)\)\s*-\s*\(([\d.-]+),\s*([\d.-]+)\)";
     let caps = regex::Regex::new(extent_pattern)?
@@ -455,49 +324,51 @@ pub async fn get_geojson_bounding_box(
     })
 }
 
-/// Nettoie le dossier tmp en conservant uniquement les fichiers GPKG
+/// Nettoie le dossier tmp en conservant optionnellement les fichiers d'une extension spécifique
 /// Cette fonction est utilisée pour nettoyer les fichiers entre les traitements
 /// de différentes régions dans le processus de création de projet
+///
+/// # Arguments
+///
+/// * `ignore_extension` - Extension des fichiers à conserver (ex: "gpkg"). Si None, supprime tout.
 ///
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - Un résultat indiquant le succès ou l'échec
-pub fn clean_tmp_except_gpkg() -> Result<(), Box<dyn std::error::Error>> {
+pub fn clean_tmp(ignore_extension: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = temp_dir();
 
     if !tmp_dir.exists() {
         return Ok(());
     }
 
-    for entry in std::fs::read_dir(tmp_dir)? {
-        let entry = entry?;
-        let path = entry.path();
+    match ignore_extension {
+        Some(ext) => {
+            for entry in std::fs::read_dir(&tmp_dir)? {
+                let entry = entry?;
+                let path = entry.path();
 
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path)?;
-            continue;
-        }
+                if path.is_dir() {
+                    std::fs::remove_dir_all(&path)?;
+                    continue;
+                }
 
-        if let Some(extension) = path.extension() {
-            if extension != "gpkg" {
-                std::fs::remove_file(&path)?;
+                if let Some(extension) = path.extension() {
+                    let extension_str = extension.to_string_lossy();
+                    let target_ext = ext.trim_start_matches('.');
+                    if extension_str != target_ext {
+                        std::fs::remove_file(&path)?;
+                    }
+                } else {
+                    std::fs::remove_file(&path)?;
+                }
             }
-        } else {
-            std::fs::remove_file(&path)?;
+        }
+        None => {
+            std::fs::remove_dir_all(&tmp_dir)?;
+            std::fs::create_dir(&tmp_dir)?;
         }
     }
-
-    Ok(())
-}
-
-pub fn clean_tmp() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = temp_dir();
-
-    if tmp_dir.exists() {
-        std::fs::remove_dir_all(&tmp_dir)?;
-    }
-
-    std::fs::create_dir(&tmp_dir)?;
 
     Ok(())
 }
@@ -541,22 +412,35 @@ pub fn get_handle() -> Option<tauri::AppHandle> {
     get_config(|config| config.handle.clone())
 }
 
-pub fn in_cache_dir<P: AsRef<Path>>(path: P) -> PathBuf {
-    cache_dir().join(path)
+pub fn in_cache_dir<P: AsRef<Path>>(path: P) -> bool {
+    cache_dir().join(path).exists()
 }
 
-pub fn in_projects_dir<P: AsRef<Path>>(path: P) -> PathBuf {
-    projects_dir().join(path)
+pub fn in_projects_dir<P: AsRef<Path>>(path: P) -> bool {
+    projects_dir().join(path).exists()
 }
 
-pub fn in_temp_dir<P: AsRef<Path>>(path: P) -> PathBuf {
-    temp_dir().join(path)
+pub fn in_temp_dir<P: AsRef<Path>>(path: P) -> bool {
+    temp_dir().join(path).exists()
 }
 
-pub fn in_resource_dir<P: AsRef<Path>>(path: P) -> PathBuf {
-    resource_dir().join(path)
+pub fn in_resource_dir<P: AsRef<Path>>(path: P) -> bool {
+    resource_dir().join(path).exists()
 }
 
-pub fn in_project_dir<P: AsRef<Path>>(path: P) -> PathBuf {
-    projects_dir().join(path)
+pub fn in_project_dir<P: AsRef<Path>>(path: P) -> bool {
+    projects_dir().join(path).exists()
+}
+
+pub fn resolve_resource_dir(
+    app_handle: &AppHandle,
+    resource_path: &str,
+) -> Result<PathBuf, ConfigError> {
+    app_handle
+        .path()
+        .resolve(resource_path, tauri::path::BaseDirectory::Resource)
+        .map_err(|e| ConfigError::ResourcePathResolution {
+            path: resource_path.to_string(),
+            source: Box::new(e),
+        })
 }

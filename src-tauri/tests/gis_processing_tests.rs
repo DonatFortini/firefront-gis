@@ -4,8 +4,8 @@ use common::*;
 
 use firefront_gis_lib::{
     gis_operation::{
-        clip_to_bb, convert_to_gpkg, create_project, fusion_datasets,
-        layers::download_satellite_jpeg, regions::create_region_geojson,
+        clip_to_bb, convert_to_gpkg, create_project, create_region_geojson, fusion_datasets,
+        layers::download_satellite_jpeg,
     },
     utils::{create_directory_if_not_exists, export_to_jpg, extract_files_by_name},
 };
