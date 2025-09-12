@@ -1,4 +1,3 @@
-use rusqlite::Connection;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
@@ -11,27 +10,12 @@ use super::{
 };
 
 use crate::{
-    types::{BoundingBox, Driver, GTiff},
+    types::{BoundingBox, Dataset, Driver, GTiff},
     utils::{
         LayerProgress, VulcainColors, cache_dir, clean_tmp, executor, extract_files_by_name,
         temp_dir,
     },
 };
-
-fn get_layer_name(
-    gpkg_path: &str,
-    layer_index: usize,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let conn = Connection::open(gpkg_path)?;
-
-    let mut stmt = conn.prepare(
-        "SELECT table_name FROM gpkg_contents WHERE data_type = 'features' ORDER BY table_name LIMIT 1 OFFSET ?"
-    )?;
-
-    let layer_name: String = stmt.query_row([layer_index], |row| row.get::<_, String>(0))?;
-
-    Ok(layer_name)
-}
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
 /// Retourne les chemins vers les fichiers GPKG pour chaque type de couche
@@ -272,7 +256,7 @@ async fn add_simple_layer(
     color: [&str; 3],
     temp_file_prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let layer_name = get_layer_name(gpkg_path, 0)?;
+    let layer_name = Dataset::open(gpkg_path).await?.layer_name(0)?;
     let temp_layer = format!(
         "{}/temp_{}.tif",
         temp_dir().to_string_lossy(),
@@ -290,7 +274,7 @@ async fn add_simple_layer(
     )
     .await?;
 
-    apply_overlay(project_file_path, &temp_layer, |&value| value > 0)?;
+    apply_overlay(project_file_path, &temp_layer, |&value| value > 0).await?;
 
     std::fs::remove_file(temp_layer)?;
 
@@ -357,7 +341,7 @@ pub async fn add_vegetation_layer(
     project_file_path: &str,
     vegetation_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vegetation_layer_name = get_layer_name(vegetation_gpkg, 0)?;
+    let vegetation_layer_name = Dataset::open(vegetation_gpkg).await?.layer_name(0)?;
 
     let feuillus_types = [
         "Feuillus",
@@ -395,7 +379,6 @@ pub async fn add_vegetation_layer(
     let temp_undefined = format!("{temp_path}/temp_undefined.tif");
     let temp_other = format!("{temp_path}/temp_other.tif");
 
-    // Rastériser chaque type exactement comme l'original
     rasterize_layer(
         project_file_path,
         vegetation_gpkg,
@@ -429,15 +412,9 @@ pub async fn add_vegetation_layer(
     )
     .await?;
 
-    // Appliquer EXACTEMENT dans l'ordre de priorité de l'original :
-    // 1. Feuillus d'abord (priorité 1)
-    apply_overlay(project_file_path, &temp_feuillus, |&value| value > 0)?;
-
-    // 2. Undefined ensuite (priorité 2) - seulement sur les zones encore transparentes
-    apply_overlay(project_file_path, &temp_undefined, |&value| value > 0)?;
-
-    // 3. Other en dernier (priorité 3) - seulement sur les zones encore transparentes
-    apply_overlay(project_file_path, &temp_other, |&value| value > 0)?;
+    apply_overlay(project_file_path, &temp_feuillus, |&value| value > 0).await?;
+    apply_overlay(project_file_path, &temp_undefined, |&value| value > 0).await?;
+    apply_overlay(project_file_path, &temp_other, |&value| value > 0).await?;
 
     clean_tmp(None)?;
     Ok(())
@@ -457,27 +434,19 @@ pub async fn add_topo_layer(
     project_file_path: &str,
     topo_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let project_info = get_raster_info(project_file_path).await?;
-    let layer_name = get_layer_name(topo_gpkg, 0)?;
+    let project_info = Dataset::open(project_file_path).await?;
+    let (width, height) = project_info.raster_size()?;
+    let bbox = project_info.bbox();
 
-    // Vérifier s'il y a des features
-    let conn = Connection::open(topo_gpkg)?;
-    let feature_count: i64 =
-        conn.query_row(&format!("SELECT COUNT(*) FROM {}", layer_name), [], |row| {
-            row.get(0)
-        })?;
+    let gpkg_info = Dataset::open(topo_gpkg).await?;
+    let layer_name = gpkg_info.layer_name(0)?;
 
-    if feature_count == 0 {
+    if gpkg_info.feature_count(0)? == Some(0) {
         println!("Layer has no features");
-        conn.close().unwrap();
         return Ok(());
     }
 
-    let geom_type_name: String = conn.query_row(
-        "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = ?1",
-        [&layer_name],
-        |row| row.get(0),
-    )?;
+    let geom_type_name = gpkg_info.geometry_type(0)?;
 
     let geom_type = match geom_type_name.to_uppercase().as_str() {
         "LINESTRING" | "MULTILINESTRING" => "LineString",
@@ -485,36 +454,29 @@ pub async fn add_topo_layer(
         "POINT" | "MULTIPOINT" => "Point",
         _ => "Unknown",
     };
-    conn.close().unwrap();
 
     let temp_topo_layer = format!("{}/temp_topo_layer.tif", temp_dir().to_string_lossy());
 
-    // Créer un raster vide avec les bonnes dimensions
     Driver::<GTiff>::new()
         .create(&[
             "-ot",
             "Byte",
             "-outsize",
-            &project_info.width.to_string(),
-            &project_info.height.to_string(),
+            &width.to_string(),
+            &height.to_string(),
             "-bands",
             "3",
             "-a_srs",
-            &project_info.projection,
+            &project_info.projection(),
             "-a_ullr",
-            &project_info.geo_transform[0].to_string(),
-            &project_info.geo_transform[3].to_string(),
-            &(project_info.geo_transform[0]
-                + (project_info.geo_transform[1] * project_info.width as f64))
-                .to_string(),
-            &(project_info.geo_transform[3]
-                + (project_info.geo_transform[5] * project_info.height as f64))
-                .to_string(),
+            &bbox.xmin.to_string(),
+            &bbox.ymax.to_string(),
+            &bbox.xmax.to_string(),
+            &bbox.ymin.to_string(),
             &temp_topo_layer,
         ])
         .await?;
 
-    // Rastériser directement les géométries avec la valeur 1 (pour créer un masque)
     let mut args = vec!["-burn", "1", "-burn", "1", "-burn", "1", "-l", &layer_name];
     if geom_type == "LineString" {
         args.push("-at");
@@ -523,9 +485,7 @@ pub async fn add_topo_layer(
 
     executor("gdal_rasterize", &args).await?;
 
-    // Appliquer EXACTEMENT comme l'original : où topo > 0, mettre le projet à noir (0)
-    // Cette logique correspond à : if mask_value { 0 } else { base_value }
-    apply_overlay(project_file_path, &temp_topo_layer, |&value| value > 0)?;
+    apply_overlay(project_file_path, &temp_topo_layer, |&value| value > 0).await?;
 
     std::fs::remove_file(&temp_topo_layer)?;
     Ok(())
@@ -533,43 +493,7 @@ pub async fn add_topo_layer(
 
 pub mod prelude {
     pub use super::{
-        RasterInfo, add_layers, add_regional_layer, add_rpg_layer, add_topo_layer,
-        add_vegetation_layer, get_raster_info, prepare_layers,
+        add_layers, add_regional_layer, add_rpg_layer, add_topo_layer, add_vegetation_layer,
+        prepare_layers,
     };
-}
-
-pub async fn get_raster_info(file_path: &str) -> Result<RasterInfo, Box<dyn std::error::Error>> {
-    let output = executor("gdalinfo", &["-json", file_path]).await?.0;
-    let info: serde_json::Value = serde_json::from_str(&output)?;
-
-    let size = info["size"].as_array().ok_or("No size info")?;
-    let width = size[0].as_u64().ok_or("Invalid width")? as usize;
-    let height = size[1].as_u64().ok_or("Invalid height")? as usize;
-
-    let geo_transform = info["geoTransform"]
-        .as_array()
-        .ok_or("No geotransform")?
-        .iter()
-        .map(|v| v.as_f64().ok_or("Invalid geotransform value"))
-        .collect::<Result<Vec<f64>, _>>()?;
-
-    let projection = info["coordinateSystem"]["wkt"]
-        .as_str()
-        .ok_or("No projection info")?
-        .to_string();
-
-    Ok(RasterInfo {
-        width,
-        height,
-        geo_transform,
-        projection,
-    })
-}
-
-#[derive(Debug)]
-pub struct RasterInfo {
-    pub width: usize,
-    pub height: usize,
-    pub geo_transform: Vec<f64>,
-    pub projection: String,
 }

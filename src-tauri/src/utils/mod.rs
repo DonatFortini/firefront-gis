@@ -85,6 +85,16 @@ pub fn get_rpg_for_dep_code(code: &str) -> Option<&str> {
         .map(|v| &**v)
 }
 
+/// Exécute une commande en tant que sidecar et retourne la sortie standard et le statut de sortie.
+///
+/// Note : Assurez-vous que la commande est incluse dans les sidecars de Tauri (dans `tauri.conf.json`).
+///
+/// # Arguments
+/// * `command` - Le nom de la commande à exécuter.
+/// * `args` - Les arguments à passer à la commande.
+///
+/// # Returns
+/// Un résultat contenant un tuple avec la sortie standard et le statut de sortie, ou une erreur.
 pub async fn executor(
     command: &str,
     args: &[&str],

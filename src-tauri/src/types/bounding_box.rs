@@ -12,6 +12,17 @@ pub struct BoundingBox {
     pub ymax: f64,
 }
 
+impl Default for BoundingBox {
+    fn default() -> Self {
+        BoundingBox {
+            xmin: 0.0,
+            ymin: 0.0,
+            xmax: 1.0,
+            ymax: 1.0,
+        }
+    }
+}
+
 impl BoundingBox {
     pub fn new(xmin: f64, ymin: f64, xmax: f64, ymax: f64) -> Self {
         BoundingBox {

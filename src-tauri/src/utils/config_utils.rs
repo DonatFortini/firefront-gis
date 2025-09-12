@@ -107,6 +107,10 @@ pub fn create_directory_if_not_exists(path: &str) -> Result<(), Box<dyn Error>> 
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - Un résultat indiquant le succès ou l'échec
+/// ```rust
+/// // Exemple d'utilisation
+/// clean_tmp(Some(".gpkg")).expect("Failed to clean tmp directory");
+/// ```
 pub fn clean_tmp(ignore_extension: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = temp_dir();
 
