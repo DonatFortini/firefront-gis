@@ -52,7 +52,8 @@
       "binaries/gdal/ogr2ogr",
       "binaries/gdal/gdal_translate",
       "binaries/gdal/gdalwarp",
-      "binaries/gdal/gdal_create"
+      "binaries/gdal/gdal_create",
+      "binaries/gdal/gdalbuildvrt"
     ]
   }
 }

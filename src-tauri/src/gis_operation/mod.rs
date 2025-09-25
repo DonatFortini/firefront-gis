@@ -9,11 +9,15 @@ use crate::types::{BoundingBox, Driver, GTiff, Region, get_region};
 use crate::utils::{executor, resolution, resource_dir};
 
 pub mod layers;
+pub mod merger;
+pub mod overlay;
 pub mod processing;
 pub mod slicing;
 pub mod wms_layer;
 
 pub use layers::prelude::*;
+pub use merger::{MergeOptions, Merger};
+pub use overlay::Overlay;
 pub use processing::prelude::*;
 pub use slicing::prelude::*;
 pub use wms_layer::prelude::*;
@@ -61,7 +65,7 @@ pub async fn create_reference_raster(
     let width = (project_bb.width() / resolution).ceil() as usize;
     let height = (project_bb.height() / resolution).ceil() as usize;
 
-    if width % 500 != 0 || height % 500 != 0 {
+    if !width.is_multiple_of(500) || !height.is_multiple_of(500) {
         return Err("Width and height must be multiples of 500".into());
     }
 

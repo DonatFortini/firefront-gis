@@ -1,5 +1,6 @@
-use crate::types::{Dataset, Driver, GTiff};
-use crate::utils::{executor, temp_dir};
+use crate::gis_operation::Overlay;
+use crate::types::Dataset;
+use crate::utils::executor;
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -96,121 +97,10 @@ pub async fn apply_overlay<F>(
 where
     F: Fn(&u8) -> bool,
 {
-    let project = Dataset::open(project_file_path).await?;
-    let overlay_raster = Dataset::open(overlay_raster_path).await?;
-    let (width, height) = project.raster_size()?;
-
-    let output_file = format!("{}/output.tif", temp_dir().to_string_lossy());
-
-    let args = [
-        "-ot",
-        "Byte",
-        "-outsize",
-        &width.to_string(),
-        &height.to_string(),
-        "-bands",
-        "4",
-        "-a_srs",
-        &project.projection().to_string(),
-        "-a_ullr",
-        &project.bbox().xmin.to_string(),
-        &project.bbox().ymax.to_string(),
-        &project.bbox().xmax.to_string(),
-        &project.bbox().ymin.to_string(),
-        "-co",
-        "TILED=YES",
-        "-co",
-        "COMPRESS=LZW",
-        "-co",
-        "BIGTIFF=IF_SAFER",
-        &output_file,
-    ];
-
-    Driver::<GTiff>::new().create(&args).await?;
-    let output_dataset = Dataset::open(&output_file).await?;
-
-    let base_data = [
-        project.rasterband(1)?,
-        project.rasterband(2)?,
-        project.rasterband(3)?,
-        project.rasterband(4)?,
-    ];
-
-    let overlay_bands = [
-        overlay_raster.rasterband(1)?,
-        overlay_raster.rasterband(2)?,
-        overlay_raster.rasterband(3)?,
-    ];
-
-    let (width, height) = project.raster_size()?;
-    let size = width * height;
-    let mut mask = vec![false; size];
-
-    for band in &overlay_bands {
-        let band_data: Vec<u8> = band
-            .read_as::<u8>((0, 0), (width, height), (width, height), None)
-            .await?
-            .data()
-            .to_vec();
-
-        for (i, value) in band_data.iter().enumerate() {
-            if mask_condition(value) {
-                mask[i] = true;
-            }
-        }
-    }
-
-    for (i, base_band) in base_data.iter().enumerate() {
-        let mut out_band = output_dataset.rasterband(((i + 1) as isize).try_into().unwrap())?;
-        let base_band_data: Vec<u8> = base_band
-            .read_as::<u8>((0, 0), (width, height), (width, height), None)
-            .await?
-            .data()
-            .to_vec();
-
-        let data = if i < overlay_bands.len() {
-            let overlay_band_data: Vec<u8> = overlay_bands[i]
-                .read_as::<u8>((0, 0), (width, height), (width, height), None)
-                .await?
-                .data()
-                .to_vec();
-
-            base_band_data
-                .iter()
-                .zip(overlay_band_data.iter())
-                .zip(mask.iter())
-                .map(|((&base_value, &overlay_value), &mask_value)| {
-                    if mask_value {
-                        overlay_value
-                    } else {
-                        base_value
-                    }
-                })
-                .collect::<Vec<u8>>()
-        } else {
-            base_band_data
-        };
-
-        out_band
-            .write(
-                (0, 0),
-                (width, height),
-                &mut gdal::raster::Buffer::new((width, height), data),
-            )
-            .await?;
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::fs::rename(output_file, project_file_path)?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        std::fs::copy(output_file, project_file_path)?;
-        std::fs::remove_file(output_file)?;
-    }
-
-    Ok(())
+    let mut overlay_processor = Overlay::new();
+    overlay_processor
+        .apply_overlay(project_file_path, overlay_raster_path, mask_condition)
+        .await
 }
 
 pub mod prelude {
