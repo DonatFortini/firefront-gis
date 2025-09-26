@@ -10,7 +10,7 @@ use super::{
 };
 
 use crate::{
-    gis_operation::apply_black_overlay,
+    gis_operation::{apply_black_overlay, processing::integrity_check},
     types::{BoundingBox, Dataset},
     utils::{LayerProgress, VulcainColors, cache_dir, clean_tmp, extract_files_by_name, temp_dir},
 };
@@ -232,6 +232,8 @@ pub async fn add_layers(project_file_path: &str) -> Result<(), Box<dyn std::erro
             }?
         }
     }
+
+    integrity_check(project_file_path).await?;
 
     Ok(())
 }

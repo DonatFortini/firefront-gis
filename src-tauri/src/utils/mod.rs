@@ -292,7 +292,7 @@ pub async fn export_to_jpg(
             project_file_path,
             "-strip",
             "-quality",
-            "90",
+            "100",
             output_jpg_path,
         ],
     )

@@ -1,6 +1,6 @@
 use crate::gis_operation::Overlay;
 use crate::types::Dataset;
-use crate::utils::executor;
+use crate::utils::{VulcainColors, executor};
 
 /// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
 ///
@@ -120,6 +120,41 @@ where
             [0, 0, 0],
         )
         .await
+}
+
+pub async fn integrity_check(project_file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (stdout, _stderr) = executor(
+        "magick",
+        &[project_file_path, "-format", "%c", "histogram:info:"],
+    )
+    .await?;
+
+    let mut corrupted = false;
+    for line in stdout.lines() {
+        if let Some(start) = line.find('(')
+            && let Some(end) = line[start..].find(')')
+        {
+            let rgb_str = &line[start + 1..start + end];
+            let rgb_parts: Vec<&str> = rgb_str.split(',').collect();
+            if rgb_parts.len() >= 3 {
+                let rgb = [
+                    rgb_parts[0].trim(),
+                    rgb_parts[1].trim(),
+                    rgb_parts[2].trim(),
+                ];
+                if !VulcainColors.values().any(|c| c == &rgb) {
+                    corrupted = true;
+                    break;
+                }
+            }
+        }
+    }
+    if corrupted {
+        println!("Corrupted layers: some colors are not in VulcainColors");
+    } else {
+        println!("All layers colors are valid");
+    }
+    Ok(())
 }
 
 pub mod prelude {
