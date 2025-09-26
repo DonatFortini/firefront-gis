@@ -10,11 +10,9 @@ use super::{
 };
 
 use crate::{
-    types::{BoundingBox, Dataset, Driver, GTiff},
-    utils::{
-        LayerProgress, VulcainColors, cache_dir, clean_tmp, executor, extract_files_by_name,
-        temp_dir,
-    },
+    gis_operation::apply_black_overlay,
+    types::{BoundingBox, Dataset},
+    utils::{LayerProgress, VulcainColors, cache_dir, clean_tmp, extract_files_by_name, temp_dir},
 };
 
 /// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
@@ -250,7 +248,7 @@ pub async fn add_layers(project_file_path: &str) -> Result<(), Box<dyn std::erro
 /// # Returns
 ///
 /// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
-async fn add_simple_layer(
+async fn add_colored_layer(
     project_file_path: &str,
     gpkg_path: &str,
     color: [&str; 3],
@@ -281,6 +279,35 @@ async fn add_simple_layer(
     Ok(())
 }
 
+pub async fn add_black_layer(
+    project_file_path: &str,
+    gpkg_path: &str,
+    temp_file_prefix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let layer_name = Dataset::open(gpkg_path).await?.layer_name(0)?;
+    let temp_layer = format!(
+        "{}/temp_{}.tif",
+        temp_dir().to_string_lossy(),
+        temp_file_prefix
+    );
+
+    rasterize_layer(
+        project_file_path,
+        gpkg_path,
+        &layer_name,
+        &temp_layer,
+        ["255", "255", "255"],
+        None,
+        None,
+    )
+    .await?;
+
+    apply_black_overlay(project_file_path, &temp_layer, |&value| value > 0).await?;
+
+    std::fs::remove_file(temp_layer)?;
+    Ok(())
+}
+
 /// Ajoute une couche départementale à un projet
 ///
 /// # Arguments
@@ -295,13 +322,7 @@ pub async fn add_regional_layer(
     project_file_path: &str,
     regional_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    add_simple_layer(
-        project_file_path,
-        regional_gpkg,
-        VulcainColors["Incombustible"],
-        "regional",
-    )
-    .await
+    add_black_layer(project_file_path, regional_gpkg, "regional").await
 }
 
 /// Ajoute une couche RPG (Registre Parcellaire Graphique) à un projet
@@ -318,7 +339,7 @@ pub async fn add_rpg_layer(
     project_file_path: &str,
     rpg_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    add_simple_layer(
+    add_colored_layer(
         project_file_path,
         rpg_gpkg,
         VulcainColors["Brousaille"],
@@ -434,60 +455,14 @@ pub async fn add_topo_layer(
     project_file_path: &str,
     topo_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let project_info = Dataset::open(project_file_path).await?;
-    let (width, height) = project_info.raster_size()?;
-    let bbox = project_info.bbox();
-
     let gpkg_info = Dataset::open(topo_gpkg).await?;
-    let layer_name = gpkg_info.layer_name(0)?;
 
     if gpkg_info.feature_count(0)? == Some(0) {
         println!("Layer has no features");
         return Ok(());
     }
 
-    let geom_type_name = gpkg_info.geometry_type(0)?;
-
-    let geom_type = match geom_type_name.to_uppercase().as_str() {
-        "LINESTRING" | "MULTILINESTRING" => "LineString",
-        "POLYGON" | "MULTIPOLYGON" => "Polygon",
-        "POINT" | "MULTIPOINT" => "Point",
-        _ => "Unknown",
-    };
-
-    let temp_topo_layer = format!("{}/temp_topo_layer.tif", temp_dir().to_string_lossy());
-
-    Driver::<GTiff>::new()
-        .create(&[
-            "-ot",
-            "Byte",
-            "-outsize",
-            &width.to_string(),
-            &height.to_string(),
-            "-bands",
-            "3",
-            "-a_srs",
-            &project_info.projection(),
-            "-a_ullr",
-            &bbox.xmin.to_string(),
-            &bbox.ymax.to_string(),
-            &bbox.xmax.to_string(),
-            &bbox.ymin.to_string(),
-            &temp_topo_layer,
-        ])
-        .await?;
-
-    let mut args = vec!["-burn", "1", "-burn", "1", "-burn", "1", "-l", &layer_name];
-    if geom_type == "LineString" {
-        args.push("-at");
-    }
-    args.extend_from_slice(&[topo_gpkg, &temp_topo_layer]);
-
-    executor("gdal_rasterize", &args).await?;
-
-    apply_overlay(project_file_path, &temp_topo_layer, |&value| value > 0).await?;
-
-    std::fs::remove_file(&temp_topo_layer)?;
+    add_black_layer(project_file_path, topo_gpkg, "topo").await?;
     Ok(())
 }
 

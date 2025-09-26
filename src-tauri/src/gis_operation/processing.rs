@@ -103,6 +103,25 @@ where
         .await
 }
 
+pub async fn apply_black_overlay<F>(
+    project_file_path: &str,
+    mask_raster_path: &str,
+    mask_condition: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Fn(&u8) -> bool,
+{
+    let mut overlay_processor = Overlay::new();
+    overlay_processor
+        .apply_overlay_with_fixed_color(
+            project_file_path,
+            mask_raster_path,
+            mask_condition,
+            [0, 0, 0],
+        )
+        .await
+}
+
 pub mod prelude {
-    pub use super::{apply_overlay, rasterize_layer};
+    pub use super::{apply_black_overlay, apply_overlay, rasterize_layer};
 }
