@@ -1,22 +1,17 @@
-use crate::gis_operation::Overlay;
 use crate::types::Dataset;
 use crate::utils::{VulcainColors, executor};
 
-/// Convertit une couche vectorielle en raster en utilisant gdal_rasterize
-///
+/// Rasterise une couche vectorielle pour correspondre à l'étendue et à la résolution d'un raster de projet.
 /// # Arguments
-///
-/// * `project` - dataset du projet
-/// * `vector_gpkg` - chemin du fichier GeoPackage contenant la couche vectorielle
-/// * `layer_name` - nom de la couche à rasteriser
-/// * `output_raster` - chemin du fichier raster de sortie
-/// * `burn_values` - valeurs à appliquer pour chaque bande (RGB)
-/// * `where_clause` - clause WHERE SQL optionnelle pour filtrer les entités
-/// * `additional_args` - arguments supplémentaires pour gdal_rasterize
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si la rastérisation a réussi ou échoué
+/// - `project_path`: Chemin vers le fichier raster du projet.
+/// - `vector_gpkg`: Chemin vers le fichier vectoriel GPKG.
+/// - `layer_name`: Nom de la couche dans le GPKG à rasteriser.
+/// - `output_raster`: Chemin pour enregistrer le fichier raster de sortie.
+/// - `burn_values`: Tableau de trois chaînes représentant les valeurs de brûlage pour R, G, B.
+/// - `where_clause`: Clause SQL WHERE optionnelle pour filtrer les entités.
+/// - `additional_args`: Arguments supplémentaires optionnels pour gdal_rasterize.
+/// # Retour
+/// - Result<(), Box<dyn std::error::Error>>: Ok si réussi, Err sinon.
 pub async fn rasterize_layer(
     project_path: &str,
     vector_gpkg: &str,
@@ -72,56 +67,6 @@ pub async fn rasterize_layer(
     Ok(())
 }
 
-/// Applique une superposition de couches raster sur un projet
-/// Cette fonction est le cœur de la logique de combinaison des données:
-/// - Lecture des données du projet de base et de la couche de superposition
-/// - Création d'un masque pour déterminer où la superposition doit être appliquée
-/// - Pour chaque pixel, si le masque est vrai, utilisation de la valeur de superposition,
-///   sinon conservation de la valeur originale
-/// - Écriture du résultat dans un nouveau fichier qui remplacera le projet original
-///
-/// # Arguments
-///
-/// * `project_file_path` - chemin du fichier projet
-/// * `overlay_raster_path` - chemin du fichier raster de superposition
-/// * `mask_condition` - fonction pour déterminer si un pixel doit être inclus dans le masque
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si la superposition a réussi ou échoué
-pub async fn apply_overlay<F>(
-    project_file_path: &str,
-    overlay_raster_path: &str,
-    mask_condition: F,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    F: Fn(&u8) -> bool,
-{
-    let mut overlay_processor = Overlay::new();
-    overlay_processor
-        .apply_overlay(project_file_path, overlay_raster_path, mask_condition)
-        .await
-}
-
-pub async fn apply_black_overlay<F>(
-    project_file_path: &str,
-    mask_raster_path: &str,
-    mask_condition: F,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    F: Fn(&u8) -> bool,
-{
-    let mut overlay_processor = Overlay::new();
-    overlay_processor
-        .apply_overlay_with_fixed_color(
-            project_file_path,
-            mask_raster_path,
-            mask_condition,
-            [0, 0, 0],
-        )
-        .await
-}
-
 pub async fn integrity_check(project_file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (stdout, _stderr) = executor(
         "magick",
@@ -158,5 +103,5 @@ pub async fn integrity_check(project_file_path: &str) -> Result<(), Box<dyn std:
 }
 
 pub mod prelude {
-    pub use super::{apply_black_overlay, apply_overlay, rasterize_layer};
+    pub use super::{integrity_check, rasterize_layer};
 }

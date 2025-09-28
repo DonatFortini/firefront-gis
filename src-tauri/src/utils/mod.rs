@@ -341,3 +341,35 @@ pub async fn get_geojson_bounding_box(
         ymax: caps[4].parse()?,
     })
 }
+
+pub struct PathBuilder {
+    pub temp_dir: String,
+    pub cache_dir: String,
+}
+
+impl Default for PathBuilder {
+    fn default() -> Self {
+        Self {
+            temp_dir: temp_dir().to_string_lossy().to_string(),
+            cache_dir: cache_dir().to_string_lossy().to_string(),
+        }
+    }
+}
+
+impl PathBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn temp_file(&self, name: &str, extension: &str) -> String {
+        format!("{}/{}.{}", self.temp_dir, name, extension)
+    }
+
+    pub fn cache_file(&self, name: &str) -> String {
+        format!("{}/{}", self.cache_dir, name)
+    }
+
+    pub fn project_resource(&self, project_folder: &str, name: &str) -> String {
+        format!("{}/resources/{}.gpkg", project_folder, name)
+    }
+}

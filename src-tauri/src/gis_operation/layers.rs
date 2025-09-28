@@ -4,131 +4,260 @@ use std::{
 };
 
 use super::{
-    create_region_geojson,
-    processing::{apply_overlay, rasterize_layer},
-    {clip_to_bb, convert_to_gpkg},
+    create_region_geojson, {Overlay, clip_to_bb, convert_to_gpkg, integrity_check, rasterize_layer},
 };
 
 use crate::{
-    gis_operation::{apply_black_overlay, processing::integrity_check},
     types::{BoundingBox, Dataset},
-    utils::{LayerProgress, VulcainColors, cache_dir, clean_tmp, extract_files_by_name, temp_dir},
+    utils::{LayerProgress, PathBuilder, VulcainColors, clean_tmp, extract_files_by_name},
 };
 
-/// Prépare les couches pour le projet, en les convertissant au format GPKG et en les découpant à l'extent régional.
-/// Retourne les chemins vers les fichiers GPKG pour chaque type de couche
-///
-/// # Arguments
-///
-/// * `app_handle` - Handle de l'application Tauri
-/// * `project_bb` - BoundingBox du projet
-/// * `code` - Code départemental de la région traitée
-///
-/// # Returns
-///
-/// * `Result<(String, String, String, HashMap<String, Vec<String>>), String>` - Un tuple contenant les chemins vers les fichiers GPKG pour la région, la végétation, le RPG et les couches topographiques
+struct LayerConfig {
+    pub archive_name: &'static str,
+    pub layer_type: &'static str,
+    pub files: &'static [&'static str],
+    pub order: i8,
+}
+
+impl LayerConfig {
+    const LAYERS: &'static [LayerConfig] = &[
+        LayerConfig {
+            archive_name: "BDFORET",
+            layer_type: "Végétation",
+            files: &["FORMATION_VEGETALE"],
+            order: 1,
+        },
+        LayerConfig {
+            archive_name: "RPG",
+            layer_type: "Parcelles agricoles",
+            files: &["PARCELLES_GRAPHIQUES"],
+            order: 2,
+        },
+        LayerConfig {
+            archive_name: "BDTOPO",
+            layer_type: "Topographie",
+            files: &[
+                "AERODROME",
+                "CONSTRUCTION_SURFACIQUE",
+                "EQUIPEMENT_DE_TRANSPORT",
+                "RESERVOIR",
+                "TERRAIN_DE_SPORT",
+                "TRONCON_DE_VOIE_FERREE",
+                "ZONE_D_ESTRAN",
+                "BATIMENT",
+                "COURS_D_EAU",
+                "PLAN_D_EAU",
+                "SURFACE_HYDROGRAPHIQUE",
+                "TRONCON_DE_ROUTE",
+                "VOIE_NOMMEE",
+            ],
+            order: 3,
+        },
+    ];
+
+    fn get_archive_path(&self, code: &str) -> String {
+        format!("{}_{}.7z", self.archive_name, code)
+    }
+
+    fn by_order() -> BTreeMap<i8, Vec<&'static str>> {
+        let mut result = BTreeMap::new();
+        for layer in Self::LAYERS {
+            result.insert(layer.order, layer.files.to_vec());
+        }
+        result
+    }
+}
+
+struct LayerProcessor {
+    overlay: Overlay,
+    path_builder: PathBuilder,
+}
+
+impl LayerProcessor {
+    fn new() -> Self {
+        Self {
+            overlay: Overlay::new(),
+            path_builder: PathBuilder::new(),
+        }
+    }
+
+    async fn apply_layer(
+        &mut self,
+        project_file_path: &str,
+        gpkg_path: &str,
+        color: [&str; 3],
+        fixed_color: Option<[u8; 3]>,
+        temp_prefix: &str,
+        where_clause: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let layer_name = Dataset::open(gpkg_path).await?.layer_name(0)?;
+        let temp_layer = self
+            .path_builder
+            .temp_file(&format!("temp_{}", temp_prefix), "tif");
+
+        rasterize_layer(
+            project_file_path,
+            gpkg_path,
+            &layer_name,
+            &temp_layer,
+            color,
+            where_clause,
+            None,
+        )
+        .await?;
+
+        self.overlay
+            .apply_overlay(
+                project_file_path,
+                &temp_layer,
+                |&value| value > 0,
+                fixed_color,
+            )
+            .await?;
+
+        std::fs::remove_file(temp_layer)?;
+        Ok(())
+    }
+
+    async fn apply_colored_layer(
+        &mut self,
+        project_file_path: &str,
+        gpkg_path: &str,
+        color: [&str; 3],
+        temp_prefix: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.apply_layer(project_file_path, gpkg_path, color, None, temp_prefix, None)
+            .await
+    }
+
+    async fn apply_black_layer(
+        &mut self,
+        project_file_path: &str,
+        gpkg_path: &str,
+        temp_prefix: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.apply_layer(
+            project_file_path,
+            gpkg_path,
+            ["255", "255", "255"],
+            Some([0, 0, 0]),
+            temp_prefix,
+            None,
+        )
+        .await
+    }
+
+    async fn apply_vegetation_layer(
+        &mut self,
+        project_file_path: &str,
+        vegetation_gpkg: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let vegetation_types = vec![
+            (
+                &[
+                    "Feuillus",
+                    "Châtaignier",
+                    "Chênes sempervirents",
+                    "Chênes décidus",
+                    "Hêtre",
+                ][..],
+                VulcainColors["Chêne"],
+                "feuillus",
+            ),
+            (&["NC", "NR"][..], VulcainColors["Brousaille"], "undefined"),
+        ];
+
+        for (types, color, prefix) in vegetation_types {
+            let where_clause = format!(
+                "ESSENCE IN ({})",
+                types
+                    .iter()
+                    .map(|t| format!("'{}'", t))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+
+            self.apply_layer(
+                project_file_path,
+                vegetation_gpkg,
+                color,
+                None,
+                prefix,
+                Some(&where_clause),
+            )
+            .await?;
+        }
+
+        let all_defined_types: Vec<String> = [
+            "Feuillus",
+            "Châtaignier",
+            "Chênes sempervirents",
+            "Chênes décidus",
+            "Hêtre",
+            "NC",
+            "NR",
+        ]
+        .iter()
+        .map(|t| format!("'{}'", t))
+        .collect();
+
+        let other_where = format!("ESSENCE NOT IN ({})", all_defined_types.join(", "));
+
+        self.apply_layer(
+            project_file_path,
+            vegetation_gpkg,
+            VulcainColors["Pin"],
+            None,
+            "other",
+            Some(&other_where),
+        )
+        .await?;
+
+        clean_tmp(None)?;
+        Ok(())
+    }
+}
+
 pub async fn prepare_layers(
     project_bb: &BoundingBox,
     code: &str,
 ) -> Result<(String, String, String, HashMap<String, Vec<String>>), String> {
-    let cache_folder_path = cache_dir().to_string_lossy().to_string();
-    let temp_dir = temp_dir().to_string_lossy().to_string();
-
+    let path_builder = PathBuilder::new();
     let mut layer_progress = LayerProgress::new("Préparation des Couches", 4);
+
     layer_progress.next_layer("étendue régionale");
-
-    let regional_geojson_path = format!("{temp_dir}/{code}.geojson");
-    create_region_geojson(code, &regional_geojson_path).unwrap();
-
-    let temp_regional_gpkg = format!("{temp_dir}/{code}.gpkg");
-    let regional_gpkg = format!("{temp_dir}/{code}_region.gpkg");
-
-    convert_to_gpkg(&regional_geojson_path, &temp_regional_gpkg)
-        .await
-        .unwrap();
-    clip_to_bb(&temp_regional_gpkg, &regional_gpkg, project_bb)
-        .await
-        .unwrap();
-
-    let mut layers: HashMap<String, Vec<&str>> = HashMap::new();
-    layers.insert(format!("BDFORET_{code}.7z"), vec!["FORMATION_VEGETALE"]);
-    layers.insert(format!("RPG_{code}.7z"), vec!["PARCELLES_GRAPHIQUES"]);
-    layers.insert(
-        format!("BDTOPO_{code}.7z"),
-        vec![
-            "AERODROME",
-            "CONSTRUCTION_SURFACIQUE",
-            "EQUIPEMENT_DE_TRANSPORT",
-            "RESERVOIR",
-            "TERRAIN_DE_SPORT",
-            "TRONCON_DE_VOIE_FERREE",
-            "ZONE_D_ESTRAN",
-            "BATIMENT",
-            "COURS_D_EAU",
-            "PLAN_D_EAU",
-            "SURFACE_HYDROGRAPHIQUE",
-            "TRONCON_DE_ROUTE",
-            "VOIE_NOMMEE",
-        ],
-    );
+    let regional_gpkg = prepare_regional_layer(&path_builder, code, project_bb).await?;
 
     let mut vegetation_gpkg = String::new();
     let mut rpg_gpkg = String::new();
     let mut topo_gpkgs: HashMap<String, Vec<String>> = HashMap::new();
 
-    for (archive, files) in layers {
-        let layer_type = if archive.contains("BDFORET") {
-            "Végétation"
-        } else if archive.contains("RPG") {
-            "Parcelles agricoles"
-        } else if archive.contains("BDTOPO") {
-            "Topographie"
-        } else {
-            "Inconnu"
-        };
+    for layer_config in LayerConfig::LAYERS {
+        layer_progress.next_layer(&format!("couches {}", layer_config.layer_type));
 
-        layer_progress.next_layer(&format!("couches {layer_type}"));
+        let archive_path = path_builder.cache_file(&layer_config.get_archive_path(code));
 
-        let archive_path = format!("{cache_folder_path}/{archive}");
-        let total_files = files.len();
+        for (file_index, file) in layer_config.files.iter().enumerate() {
+            let params = ProcessLayerParams {
+                path_builder: &path_builder,
+                archive_path: &archive_path,
+                file,
+                code,
+                project_bb,
+                layer_progress: &mut layer_progress,
+                file_index,
+                total_files: layer_config.files.len(),
+            };
+            let output_gpkg = process_layer_file(params).await?;
 
-        for (file_index, file) in files.iter().enumerate() {
-            layer_progress.layer_operation(file, "Extraction", file_index + 1, total_files);
-            extract_files_by_name(&archive_path, file, &temp_dir).await.map_err(|e| {
-                format!(
-                    "Erreur lors de l'extraction du fichier {file} depuis l'archive {archive}: {e:?}"
-                )
-            })?;
-
-            let temp_file = format!("{temp_dir}/{file}/{file}.shp");
-            let temp_gpkg = format!("{temp_dir}/{file}.gpkg");
-            let output_gpkg = format!("{temp_dir}/{code}_{file}.gpkg");
-
-            layer_progress.layer_operation(file, "Conversion", file_index + 1, total_files);
-
-            if let Err(e) = convert_to_gpkg(&temp_file, &temp_gpkg).await {
-                return Err(format!(
-                    "Erreur lors de la conversion du fichier {temp_file} en GPKG: {e:?}"
-                ));
-            }
-
-            layer_progress.layer_operation(file, "Découpage", file_index + 1, total_files);
-
-            if let Err(e) = clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await {
-                return Err(format!(
-                    "Erreur lors du découpage du fichier {temp_gpkg}: {e:?}"
-                ));
-            }
-
-            if file == &"FORMATION_VEGETALE" {
-                vegetation_gpkg = output_gpkg.clone();
-            } else if file == &"PARCELLES_GRAPHIQUES" {
-                rpg_gpkg = output_gpkg.clone();
-            } else {
-                topo_gpkgs
+            match layer_config.order {
+                1 => vegetation_gpkg = output_gpkg,
+                2 => rpg_gpkg = output_gpkg,
+                3 => topo_gpkgs
                     .entry(file.to_string())
                     .or_default()
-                    .push(output_gpkg.clone());
+                    .push(output_gpkg),
+                _ => {}
             }
         }
     }
@@ -136,336 +265,207 @@ pub async fn prepare_layers(
     Ok((regional_gpkg, vegetation_gpkg, rpg_gpkg, topo_gpkgs))
 }
 
-/// Ajoute les couches au projet.
-/// Cette fonction est responsable de l'ajout des couches régionales, de végétation, de RPG et topographiques
-/// au projet en utilisant les chemins fournis.
-/// Elle émet également des événements de mise à jour de progression pour informer l'utilisateur
-/// de l'état d'avancement de l'ajout des couches.
-///
-/// # Arguments
-///
-/// * `app_handle` - Handle de l'application Tauri
-/// * `project_folder` - chemin du dossier du projet
-/// * `project_file_path` - chemin du fichier projet
-/// * `project_name` - nom du projet
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
+async fn prepare_regional_layer(
+    path_builder: &PathBuilder,
+    code: &str,
+    project_bb: &BoundingBox,
+) -> Result<String, String> {
+    let regional_geojson_path = path_builder.temp_file(code, "geojson");
+    let temp_regional_gpkg = path_builder.temp_file(code, "gpkg");
+    let regional_gpkg = path_builder.temp_file(&format!("{}_region", code), "gpkg");
+
+    create_region_geojson(code, &regional_geojson_path)
+        .map_err(|e| format!("Erreur création géojson régional: {:?}", e))?;
+
+    convert_to_gpkg(&regional_geojson_path, &temp_regional_gpkg)
+        .await
+        .map_err(|e| format!("Erreur conversion régionale: {:?}", e))?;
+
+    clip_to_bb(&temp_regional_gpkg, &regional_gpkg, project_bb)
+        .await
+        .map_err(|e| format!("Erreur découpage régional: {:?}", e))?;
+
+    Ok(regional_gpkg)
+}
+
+struct ProcessLayerParams<'a> {
+    path_builder: &'a PathBuilder,
+    archive_path: &'a str,
+    file: &'a str,
+    code: &'a str,
+    project_bb: &'a BoundingBox,
+    layer_progress: &'a mut LayerProgress,
+    file_index: usize,
+    total_files: usize,
+}
+
+async fn process_layer_file(params: ProcessLayerParams<'_>) -> Result<String, String> {
+    params.layer_progress.layer_operation(
+        params.file,
+        "Extraction",
+        params.file_index + 1,
+        params.total_files,
+    );
+    extract_files_by_name(
+        params.archive_path,
+        params.file,
+        &params.path_builder.temp_dir,
+    )
+    .await
+    .map_err(|e| format!("Erreur extraction {}: {:?}", params.file, e))?;
+
+    params.layer_progress.layer_operation(
+        params.file,
+        "Conversion",
+        params.file_index + 1,
+        params.total_files,
+    );
+    let temp_file = format!(
+        "{}/{}/{}.shp",
+        params.path_builder.temp_dir, params.file, params.file
+    );
+    let temp_gpkg = params.path_builder.temp_file(params.file, "gpkg");
+    convert_to_gpkg(&temp_file, &temp_gpkg)
+        .await
+        .map_err(|e| format!("Erreur conversion {}: {:?}", params.file, e))?;
+
+    params.layer_progress.layer_operation(
+        params.file,
+        "Découpage",
+        params.file_index + 1,
+        params.total_files,
+    );
+    let output_gpkg = params
+        .path_builder
+        .temp_file(&format!("{}_{}", params.code, params.file), "gpkg");
+    clip_to_bb(&temp_gpkg, &output_gpkg, params.project_bb)
+        .await
+        .map_err(|e| format!("Erreur découpage {}: {:?}", params.file, e))?;
+
+    Ok(output_gpkg)
+}
+
 pub async fn add_layers(project_file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let project_file_path_obj = Path::new(project_file_path);
-    let project_folder = project_file_path_obj
+    let project_path = Path::new(project_file_path);
+    let project_folder = project_path
         .parent()
         .ok_or("Invalid project_file_path: no parent directory")?
         .to_string_lossy()
         .to_string();
-    let project_name = project_file_path_obj
+    let project_name = project_path
         .file_stem()
         .ok_or("Invalid project_file_path: no file stem")?
         .to_string_lossy()
         .to_string();
 
+    let path_builder = PathBuilder::new();
     let mut layer_progress = LayerProgress::new("Ajout des Couches", 4);
+    let mut processor = LayerProcessor::new();
 
     layer_progress.next_layer("couche régionale");
+    processor
+        .apply_black_layer(
+            project_file_path,
+            &path_builder.project_resource(&project_folder, &project_name),
+            "regional",
+        )
+        .await?;
 
-    if let Err(e) = add_regional_layer(
-        project_file_path,
-        &format!("{project_folder}/resources/{project_name}.gpkg"),
-    )
-    .await
-    {
-        println!("Failed to add regional layer: {e:?}");
-        return Err(e);
-    }
+    for (order, files) in LayerConfig::by_order() {
+        let layer_type = LayerConfig::LAYERS
+            .iter()
+            .find(|l| l.order == order)
+            .map(|l| l.layer_type)
+            .unwrap_or("Inconnu");
 
-    let mut layers: BTreeMap<i8, Vec<&str>> = BTreeMap::new();
-    layers.insert(1, vec!["FORMATION_VEGETALE"]);
-    layers.insert(2, vec!["PARCELLES_GRAPHIQUES"]);
-    layers.insert(
-        3,
-        vec![
-            "AERODROME",
-            "CONSTRUCTION_SURFACIQUE",
-            "EQUIPEMENT_DE_TRANSPORT",
-            "RESERVOIR",
-            "TERRAIN_DE_SPORT",
-            "TRONCON_DE_VOIE_FERREE",
-            "ZONE_D_ESTRAN",
-            "BATIMENT",
-            "COURS_D_EAU",
-            "PLAN_D_EAU",
-            "SURFACE_HYDROGRAPHIQUE",
-            "TRONCON_DE_ROUTE",
-            "VOIE_NOMMEE",
-        ],
-    );
+        layer_progress.next_layer(&format!("couches {}", layer_type));
 
-    for (key, value) in layers {
-        let layer_type = match key {
-            1 => "Végétation",
-            2 => "Parcelles agricoles",
-            3 => "Topographie",
-            _ => "Inconnu",
-        };
-
-        layer_progress.next_layer(&format!("couches {layer_type}"));
-
-        let total_files = value.len();
-        for (file_index, file) in value.iter().enumerate() {
+        for (file_index, file) in files.iter().enumerate() {
             layer_progress.layer_operation(
-                &format!("couches {layer_type}"),
-                &format!("Ajout de {file}"),
+                &format!("couches {}", layer_type),
+                &format!("Ajout de {}", file),
                 file_index + 1,
-                total_files,
+                files.len(),
             );
 
-            let layer_path = format!("{project_folder}/resources/{file}.gpkg");
-            match key {
-                1 => add_vegetation_layer(project_file_path, &layer_path).await,
-                2 => add_rpg_layer(project_file_path, &layer_path).await,
-                3 => add_topo_layer(project_file_path, &layer_path).await,
-                _ => {
-                    println!("Unknown layer type");
-                    return Err(Box::new(std::io::Error::other("Unknown layer type")));
+            let layer_path = path_builder.project_resource(&project_folder, file);
+
+            match order {
+                1 => {
+                    processor
+                        .apply_vegetation_layer(project_file_path, &layer_path)
+                        .await?
                 }
-            }?
+                2 => {
+                    processor
+                        .apply_colored_layer(
+                            project_file_path,
+                            &layer_path,
+                            VulcainColors["Brousaille"],
+                            "rpg",
+                        )
+                        .await?
+                }
+                3 => {
+                    let dataset = Dataset::open(&layer_path).await?;
+                    if dataset.feature_count(0)? != Some(0) {
+                        processor
+                            .apply_black_layer(project_file_path, &layer_path, "topo")
+                            .await?;
+                    }
+                }
+                _ => return Err("Type de couche inconnu".into()),
+            }
         }
     }
 
     integrity_check(project_file_path).await?;
-
     Ok(())
 }
 
-/// Ajoute une couche simple à un projet avec une couleur donnée
-///
-/// # Arguments
-///
-/// * `project_file_path` - chemin du fichier projet
-/// * `gpkg_path` - chemin du fichier GeoPackage contenant les données
-/// * `color` - couleur RGB à appliquer [R, G, B]
-/// * `temp_file_prefix` - préfixe pour le fichier temporaire
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
-async fn add_colored_layer(
-    project_file_path: &str,
-    gpkg_path: &str,
-    color: [&str; 3],
-    temp_file_prefix: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let layer_name = Dataset::open(gpkg_path).await?.layer_name(0)?;
-    let temp_layer = format!(
-        "{}/temp_{}.tif",
-        temp_dir().to_string_lossy(),
-        temp_file_prefix
-    );
-
-    rasterize_layer(
-        project_file_path,
-        gpkg_path,
-        &layer_name,
-        &temp_layer,
-        color,
-        None,
-        None,
-    )
-    .await?;
-
-    apply_overlay(project_file_path, &temp_layer, |&value| value > 0).await?;
-
-    std::fs::remove_file(temp_layer)?;
-
-    Ok(())
-}
-
-pub async fn add_black_layer(
-    project_file_path: &str,
-    gpkg_path: &str,
-    temp_file_prefix: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let layer_name = Dataset::open(gpkg_path).await?.layer_name(0)?;
-    let temp_layer = format!(
-        "{}/temp_{}.tif",
-        temp_dir().to_string_lossy(),
-        temp_file_prefix
-    );
-
-    rasterize_layer(
-        project_file_path,
-        gpkg_path,
-        &layer_name,
-        &temp_layer,
-        ["255", "255", "255"],
-        None,
-        None,
-    )
-    .await?;
-
-    apply_black_overlay(project_file_path, &temp_layer, |&value| value > 0).await?;
-
-    std::fs::remove_file(temp_layer)?;
-    Ok(())
-}
-
-/// Ajoute une couche départementale à un projet
-///
-/// # Arguments
-///
-/// * `project_file_path` - chemin du fichier projet
-/// * `regional_gpkg` - chemin du fichier GeoPackage contenant les données départementales
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
 pub async fn add_regional_layer(
     project_file_path: &str,
     regional_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    add_black_layer(project_file_path, regional_gpkg, "regional").await
+    LayerProcessor::new()
+        .apply_black_layer(project_file_path, regional_gpkg, "regional")
+        .await
 }
 
-/// Ajoute une couche RPG (Registre Parcellaire Graphique) à un projet
-///
-/// # Arguments
-///
-/// * `project_file_path` - chemin du fichier projet
-/// * `rpg_gpkg` - chemin du fichier GeoPackage contenant les données RPG
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
 pub async fn add_rpg_layer(
     project_file_path: &str,
     rpg_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    add_colored_layer(
-        project_file_path,
-        rpg_gpkg,
-        VulcainColors["Brousaille"],
-        "rpg",
-    )
-    .await
+    LayerProcessor::new()
+        .apply_colored_layer(
+            project_file_path,
+            rpg_gpkg,
+            VulcainColors["Brousaille"],
+            "rpg",
+        )
+        .await
 }
 
-/// Ajoute une couche de végétation à un projet en distinguant différents types
-///
-/// # Arguments
-///
-/// * `project_file_path` - chemin du fichier projet
-/// * `vegetation_gpkg` - chemin du fichier GeoPackage contenant les données de végétation
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
 pub async fn add_vegetation_layer(
     project_file_path: &str,
     vegetation_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vegetation_layer_name = Dataset::open(vegetation_gpkg).await?.layer_name(0)?;
-
-    let feuillus_types = [
-        "Feuillus",
-        "Châtaignier",
-        "Chênes sempervirents",
-        "Chênes décidus",
-        "Hêtre",
-    ];
-    let undefined_types = ["NC", "NR"];
-
-    let feuillus_where = format!(
-        "ESSENCE IN ('{}', '{}', '{}', '{}', '{}')",
-        feuillus_types[0],
-        feuillus_types[1],
-        feuillus_types[2],
-        feuillus_types[3],
-        feuillus_types[4]
-    );
-
-    let undefined_where = format!(
-        "ESSENCE IN ('{}', '{}')",
-        undefined_types[0], undefined_types[1]
-    );
-
-    let all_types = feuillus_types
-        .iter()
-        .chain(undefined_types.iter())
-        .map(|t| format!("'{t}'"))
-        .collect::<Vec<String>>()
-        .join(", ");
-    let other_where = format!("ESSENCE NOT IN ({all_types})");
-
-    let temp_path = temp_dir().to_string_lossy().to_string();
-    let temp_feuillus = format!("{temp_path}/temp_feuillus.tif");
-    let temp_undefined = format!("{temp_path}/temp_undefined.tif");
-    let temp_other = format!("{temp_path}/temp_other.tif");
-
-    rasterize_layer(
-        project_file_path,
-        vegetation_gpkg,
-        &vegetation_layer_name,
-        &temp_feuillus,
-        VulcainColors["Chêne"],
-        Some(&feuillus_where),
-        None,
-    )
-    .await?;
-
-    rasterize_layer(
-        project_file_path,
-        vegetation_gpkg,
-        &vegetation_layer_name,
-        &temp_undefined,
-        VulcainColors["Brousaille"],
-        Some(&undefined_where),
-        None,
-    )
-    .await?;
-
-    rasterize_layer(
-        project_file_path,
-        vegetation_gpkg,
-        &vegetation_layer_name,
-        &temp_other,
-        VulcainColors["Pin"],
-        Some(&other_where),
-        None,
-    )
-    .await?;
-
-    apply_overlay(project_file_path, &temp_feuillus, |&value| value > 0).await?;
-    apply_overlay(project_file_path, &temp_undefined, |&value| value > 0).await?;
-    apply_overlay(project_file_path, &temp_other, |&value| value > 0).await?;
-
-    clean_tmp(None)?;
-    Ok(())
+    LayerProcessor::new()
+        .apply_vegetation_layer(project_file_path, vegetation_gpkg)
+        .await
 }
 
-/// Ajoute une couche topographique à un projet
-///
-/// # Arguments
-///
-/// * `project_file_path` - chemin du fichier projet
-/// * `topo_gpkg` - chemin du fichier GeoPackage contenant les données topographiques
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error>>` - un résultat indiquant si l'ajout a réussi ou échoué
 pub async fn add_topo_layer(
     project_file_path: &str,
     topo_gpkg: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let gpkg_info = Dataset::open(topo_gpkg).await?;
-
-    if gpkg_info.feature_count(0)? == Some(0) {
-        println!("Layer has no features");
+    let dataset = Dataset::open(topo_gpkg).await?;
+    if dataset.feature_count(0)? == Some(0) {
         return Ok(());
     }
-
-    add_black_layer(project_file_path, topo_gpkg, "topo").await?;
-    Ok(())
+    LayerProcessor::new()
+        .apply_black_layer(project_file_path, topo_gpkg, "topo")
+        .await
 }
 
 pub mod prelude {

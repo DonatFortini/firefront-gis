@@ -2,6 +2,16 @@ use crate::types::Dataset;
 use crate::utils::{clean_tmp, executor, temp_dir};
 use std::path::{Path, PathBuf};
 
+struct OverlayContext<'a> {
+    width: usize,
+    height: usize,
+    temp_dir: &'a Path,
+    project_bands: Vec<PathBuf>,
+    overlay_bands: Vec<PathBuf>,
+    mask: Vec<bool>,
+    fixed_color: Option<[u8; 3]>,
+}
+
 #[derive(Default)]
 pub struct Overlay {}
 
@@ -15,6 +25,7 @@ impl Overlay {
         project_file_path: &str,
         overlay_raster_path: &str,
         mask_condition: F,
+        fixed_color: Option<[u8; 3]>,
     ) -> Result<(), Box<dyn std::error::Error>>
     where
         F: Fn(&u8) -> bool,
@@ -23,7 +34,6 @@ impl Overlay {
         let temp_dir = temp_dir_buf.as_path();
 
         let project = Dataset::open(project_file_path).await?;
-
         let (width, height) = project.raster_size()?;
 
         let project_bands = self
@@ -32,37 +42,28 @@ impl Overlay {
         let overlay_bands = self
             .extract_bands(overlay_raster_path, temp_dir, "overlay", 3)
             .await?;
-
         let mask = self
             .create_mask(&overlay_bands, width, height, mask_condition)
             .await?;
 
-        let output_bands = self
-            .combine_bands(
-                &project_bands,
-                &overlay_bands,
-                &mask,
-                width,
-                height,
-                temp_dir,
-            )
-            .await?;
+        let context = OverlayContext {
+            width,
+            height,
+            temp_dir,
+            project_bands,
+            overlay_bands,
+            mask,
+            fixed_color,
+        };
+
+        let output_bands = self.combine_bands(&context)?;
 
         let output_file = temp_dir.join("output.tif");
-        self.create_final_output(&output_bands, &output_file, &project)
+        self.create_output(&output_bands, &output_file, &project)
             .await?;
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::fs::rename(&output_file, project_file_path)?;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            std::fs::copy(&output_file, project_file_path)?;
-            std::fs::remove_file(&output_file)?;
-        }
-
+        self.finalize_output(&output_file, project_file_path)?;
         self.cleanup();
+
         Ok(())
     }
 
@@ -77,7 +78,6 @@ impl Overlay {
 
         for band_num in 1..=num_bands {
             let band_file = temp_dir.join(format!("{}_band_{}.dat", prefix, band_num));
-
             let band_num_str = band_num.to_string();
             let band_file_str = band_file.to_string_lossy().to_string();
             let args = vec![
@@ -113,7 +113,6 @@ impl Overlay {
 
         for band_file in overlay_bands {
             let band_data = std::fs::read(band_file)?;
-
             for (i, &value) in band_data.iter().enumerate() {
                 if i < size && mask_condition(&value) {
                     mask[i] = true;
@@ -124,124 +123,111 @@ impl Overlay {
         Ok(mask)
     }
 
-    async fn combine_bands(
+    fn combine_bands(
         &self,
-        project_bands: &[PathBuf],
-        overlay_bands: &[PathBuf],
-        mask: &[bool],
-        width: usize,
-        height: usize,
-        temp_dir: &Path,
+        context: &OverlayContext,
     ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
         let mut output_bands = Vec::new();
 
-        for (i, project_band_file) in project_bands.iter().enumerate() {
-            let mut project_data = match std::fs::read(project_band_file) {
-                Ok(data) => data,
-                Err(e) => {
-                    return Err(format!("Failed to read project band {}: {}", i + 1, e).into());
-                }
-            };
+        for (i, project_band_file) in context.project_bands.iter().enumerate() {
+            let mut project_data = std::fs::read(project_band_file)
+                .map_err(|e| format!("Failed to read project band {}: {}", i + 1, e))?;
 
-            if i < overlay_bands.len() {
-                let overlay_data = match std::fs::read(&overlay_bands[i]) {
-                    Ok(data) => data,
-                    Err(e) => {
-                        return Err(format!("Failed to read overlay band {}: {}", i + 1, e).into());
+            // Apply overlay based on strategy
+            match context.fixed_color {
+                None => {
+                    // Use overlay data directly
+                    if i < context.overlay_bands.len() {
+                        let overlay_data = std::fs::read(&context.overlay_bands[i])
+                            .map_err(|e| format!("Failed to read overlay band {}: {}", i + 1, e))?;
+
+                        for (j, (&mask_value, &overlay_value)) in
+                            context.mask.iter().zip(overlay_data.iter()).enumerate()
+                        {
+                            if j < project_data.len() && mask_value {
+                                project_data[j] = overlay_value;
+                            }
+                        }
                     }
-                };
-
-                for (j, (&mask_value, overlay_value)) in
-                    mask.iter().zip(overlay_data.iter()).enumerate()
-                {
-                    if j < project_data.len() && mask_value {
-                        project_data[j] = *overlay_value;
+                }
+                Some(rgb) => {
+                    for (j, &mask_value) in context.mask.iter().enumerate() {
+                        if j < project_data.len() && mask_value {
+                            project_data[j] = match i {
+                                0..=2 => rgb[i],
+                                3 => 255,
+                                _ => project_data[j],
+                            };
+                        }
                     }
                 }
             }
 
-            let output_band_file = temp_dir.join(format!("output_band_{}.dat", i + 1));
-            let output_header_file = temp_dir.join(format!("output_band_{}.hdr", i + 1));
-
-            std::fs::write(&output_band_file, &project_data)?;
-
-            let header_content = format!(
-                "ENVI\n\
-                description = {{ Combined band {} }}\n\
-                samples = {}\n\
-                lines = {}\n\
-                bands = 1\n\
-                header offset = 0\n\
-                file type = ENVI Standard\n\
-                data type = 1\n\
-                interleave = bsq\n\
-                byte order = 0\n",
-                i + 1,
-                width,
-                height
-            );
-
-            std::fs::write(&output_header_file, header_content)?;
-
+            let output_band_file = self.write_band(&project_data, i + 1, context)?;
             output_bands.push(output_band_file);
-        }
-
-        for (i, output_file) in output_bands.iter().enumerate() {
-            if !output_file.exists() {
-                return Err(format!(
-                    "Output band file {} was not created: {}",
-                    i + 1,
-                    output_file.display()
-                )
-                .into());
-            }
-
-            let header_file = output_file.with_extension("hdr");
-            if !header_file.exists() {
-                return Err(format!(
-                    "Output header file {} was not created: {}",
-                    i + 1,
-                    header_file.display()
-                )
-                .into());
-            }
         }
 
         Ok(output_bands)
     }
 
-    async fn create_final_output(
+    fn write_band(
+        &self,
+        data: &[u8],
+        band_num: usize,
+        context: &OverlayContext,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let band_file = context
+            .temp_dir
+            .join(format!("output_band_{}.dat", band_num));
+        let header_file = context
+            .temp_dir
+            .join(format!("output_band_{}.hdr", band_num));
+
+        std::fs::write(&band_file, data)?;
+
+        let header = format!(
+            "ENVI\n\
+            description = {{ Combined band {} }}\n\
+            samples = {}\n\
+            lines = {}\n\
+            bands = 1\n\
+            header offset = 0\n\
+            file type = ENVI Standard\n\
+            data type = 1\n\
+            interleave = bsq\n\
+            byte order = 0\n",
+            band_num, context.width, context.height
+        );
+
+        std::fs::write(&header_file, header)?;
+        Ok(band_file)
+    }
+
+    async fn create_output(
         &self,
         band_files: &[PathBuf],
         output_file: &Path,
-        reference_dataset: &Dataset,
+        reference: &Dataset,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let vrt_file = output_file.with_extension("vrt");
-
-        let mut args = vec!["-separate"];
-        let vrt_file_str = vrt_file.to_string_lossy().to_string();
-        args.push(&vrt_file_str);
-
-        let band_file_strs: Vec<String> = band_files
+        let vrt_file_lossy = vrt_file.to_string_lossy().to_string();
+        let mut vrt_args = vec!["-separate", vrt_file_lossy.as_str()];
+        let band_strs: Vec<String> = band_files
             .iter()
-            .map(|band_file| band_file.to_string_lossy().to_string())
+            .map(|f| f.to_string_lossy().to_string())
             .collect();
+        vrt_args.extend(band_strs.iter().map(|s| s.as_str()));
 
-        for band_file_str in &band_file_strs {
-            args.push(band_file_str);
-        }
+        executor("gdalbuildvrt", &vrt_args).await?;
 
-        executor("gdalbuildvrt", &args).await?;
-
-        let bbox = reference_dataset.bbox();
-
+        let bbox = reference.bbox();
         let xmin_str = bbox.xmin.to_string();
         let ymax_str = bbox.ymax.to_string();
         let xmax_str = bbox.xmax.to_string();
         let ymin_str = bbox.ymin.to_string();
-        let projection = reference_dataset.projection();
 
-        let mut final_args = vec![
+        let projection = reference.projection();
+        let mut args = vec![
             "-of",
             "GTiff",
             "-co",
@@ -258,144 +244,40 @@ impl Overlay {
         ];
 
         if band_files.len() >= 4 {
-            final_args.extend_from_slice(&[
+            args.extend(&[
                 "-colorinterp",
                 "red,green,blue,alpha",
                 "-co",
                 "PHOTOMETRIC=RGB",
             ]);
         } else if band_files.len() == 3 {
-            final_args.extend_from_slice(&[
-                "-colorinterp",
-                "red,green,blue",
-                "-co",
-                "PHOTOMETRIC=RGB",
-            ]);
+            args.extend(&["-colorinterp", "red,green,blue", "-co", "PHOTOMETRIC=RGB"]);
         }
 
-        let vrt_file_lossy = vrt_file.to_string_lossy();
-        let output_file_lossy = output_file.to_string_lossy();
-        final_args.push(&vrt_file_lossy);
-        final_args.push(&output_file_lossy);
-
-        executor("gdal_translate", &final_args).await?;
+        let vrt_file_str = vrt_file.to_string_lossy().to_string();
+        let output_file_str = output_file.to_string_lossy().to_string();
+        args.extend(&[vrt_file_str.as_str(), output_file_str.as_str()]);
+        executor("gdal_translate", &args).await?;
 
         std::fs::remove_file(&vrt_file)?;
-
         Ok(())
     }
 
-    pub async fn apply_overlay_with_fixed_color<F>(
-        &mut self,
-        project_file_path: &str,
-        mask_raster_path: &str,
-        mask_condition: F,
-        fixed_rgb: [u8; 3],
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        F: Fn(&u8) -> bool,
-    {
-        let temp_dir_buf = temp_dir();
-        let temp_dir = temp_dir_buf.as_path();
-
-        let project = Dataset::open(project_file_path).await?;
-        let (width, height) = project.raster_size()?;
-
-        let project_bands = self
-            .extract_bands(project_file_path, temp_dir, "project", 4)
-            .await?;
-        let mask_bands = self
-            .extract_bands(mask_raster_path, temp_dir, "mask", 3)
-            .await?;
-
-        let mask = self
-            .create_mask(&mask_bands, width, height, mask_condition)
-            .await?;
-
-        let output_bands = self
-            .combine_bands_with_fixed_color(
-                &project_bands,
-                &mask,
-                fixed_rgb,
-                width,
-                height,
-                temp_dir,
-            )
-            .await?;
-
-        let output_file = temp_dir.join("output.tif");
-        self.create_final_output(&output_bands, &output_file, &project)
-            .await?;
-
+    fn finalize_output(
+        &self,
+        output_file: &Path,
+        target: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(target_os = "windows"))]
-        {
-            std::fs::rename(&output_file, project_file_path)?;
-        }
+        std::fs::rename(output_file, target)?;
+
         #[cfg(target_os = "windows")]
         {
-            std::fs::copy(&output_file, project_file_path)?;
-            std::fs::remove_file(&output_file)?;
+            std::fs::copy(output_file, target)?;
+            std::fs::remove_file(output_file)?;
         }
 
-        self.cleanup();
         Ok(())
-    }
-
-    async fn combine_bands_with_fixed_color(
-        &self,
-        project_bands: &[PathBuf],
-        mask: &[bool],
-        fixed_rgb: [u8; 3],
-        width: usize,
-        height: usize,
-        temp_dir: &Path,
-    ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-        let mut output_bands = Vec::new();
-
-        for (i, project_band_file) in project_bands.iter().enumerate() {
-            let mut project_data = match std::fs::read(project_band_file) {
-                Ok(data) => data,
-                Err(e) => {
-                    return Err(format!("Failed to read project band {}: {}", i + 1, e).into());
-                }
-            };
-
-            for (j, &mask_value) in mask.iter().enumerate() {
-                if j < project_data.len() && mask_value {
-                    if i < 3 {
-                        project_data[j] = fixed_rgb[i];
-                    } else if i == 3 {
-                        project_data[j] = 255;
-                    }
-                }
-            }
-
-            let output_band_file = temp_dir.join(format!("output_band_{}.dat", i + 1));
-            let output_header_file = temp_dir.join(format!("output_band_{}.hdr", i + 1));
-
-            std::fs::write(&output_band_file, &project_data)?;
-
-            let header_content = format!(
-                "ENVI\n\
-                description = {{ Combined band {} }}\n\
-                samples = {}\n\
-                lines = {}\n\
-                bands = 1\n\
-                header offset = 0\n\
-                file type = ENVI Standard\n\
-                data type = 1\n\
-                interleave = bsq\n\
-                byte order = 0\n",
-                i + 1,
-                width,
-                height
-            );
-
-            std::fs::write(&output_header_file, header_content)?;
-            output_bands.push(output_band_file);
-        }
-
-        Ok(output_bands)
     }
 
     fn cleanup(&self) {
