@@ -42,4 +42,3 @@ shapefile = "0.7.0"
 geozero = "0.14.0"
 wkt = "0.14.0"
 tiff = "0.10.3"
-gdal = { version = "0.18.0", features = ["bindgen"] }
