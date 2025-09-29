@@ -1,5 +1,5 @@
 use crate::types::Dataset;
-use crate::utils::{clean_tmp, executor, temp_dir};
+use crate::utils::{clean_tmp, execute_sidecar, temp_dir};
 use std::path::{Path, PathBuf};
 
 struct OverlayContext<'a> {
@@ -91,7 +91,7 @@ impl Overlay {
                 &band_file_str,
             ];
 
-            executor("gdal_translate", &args).await?;
+            execute_sidecar("gdal_translate", &args).await?;
             band_files.push(band_file);
         }
 
@@ -218,7 +218,7 @@ impl Overlay {
             .collect();
         vrt_args.extend(band_strs.iter().map(|s| s.as_str()));
 
-        executor("gdalbuildvrt", &vrt_args).await?;
+        execute_sidecar("gdalbuildvrt", &vrt_args).await?;
 
         let bbox = reference.bbox();
         let xmin_str = bbox.xmin.to_string();
@@ -257,7 +257,7 @@ impl Overlay {
         let vrt_file_str = vrt_file.to_string_lossy().to_string();
         let output_file_str = output_file.to_string_lossy().to_string();
         args.extend(&[vrt_file_str.as_str(), output_file_str.as_str()]);
-        executor("gdal_translate", &args).await?;
+        execute_sidecar("gdal_translate", &args).await?;
 
         std::fs::remove_file(&vrt_file)?;
         Ok(())

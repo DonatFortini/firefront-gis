@@ -1,5 +1,5 @@
-use crate::utils::{clean_tmp, executor};
-use std::env::temp_dir;
+use crate::utils::{clean_tmp, execute_sidecar, temp_dir};
+
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -166,7 +166,7 @@ impl Merger {
 
         args.push(&self.options.output_file);
 
-        executor("gdalwarp", &args).await?;
+        execute_sidecar("gdalwarp", &args).await?;
 
         Ok(())
     }
@@ -221,7 +221,7 @@ impl Merger {
             args.push(input_file);
         }
 
-        executor("gdalbuildvrt", &args).await?;
+        execute_sidecar("gdalbuildvrt", &args).await?;
 
         Ok(vrt_path)
     }
@@ -237,7 +237,7 @@ impl Merger {
         args.push(&vrt_path_str);
         args.push(&self.options.output_file);
 
-        executor("gdal_translate", &args).await?;
+        execute_sidecar("gdal_translate", &args).await?;
 
         Ok(())
     }

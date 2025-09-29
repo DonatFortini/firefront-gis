@@ -1,4 +1,4 @@
-use crate::{types::BoundingBox, utils::executor};
+use crate::{types::BoundingBox, utils::execute_sidecar};
 use serde_json::Value;
 use std::error::Error;
 
@@ -91,7 +91,7 @@ impl<T: DriverFormat> Driver<T> {
     pub async fn create(&self, args: &[&str]) -> Result<(), Box<dyn Error>> {
         let mut pref_args = vec!["-of", T::NAME];
         pref_args.extend_from_slice(args);
-        executor("gdal_create", &pref_args).await?;
+        execute_sidecar("gdal_create", &pref_args).await?;
         Ok(())
     }
 }
@@ -223,9 +223,9 @@ impl Dataset {
         let (is_raster, driver_name) = Self::detect_format(&extension)?;
 
         let output = if is_raster {
-            executor("gdalinfo", &["-json", file_path]).await?.0
+            execute_sidecar("gdalinfo", &["-json", file_path]).await?.0
         } else {
-            executor("ogrinfo", &["-json", file_path]).await?.0
+            execute_sidecar("ogrinfo", &["-json", file_path]).await?.0
         };
 
         let info: Value = serde_json::from_str(&output)?;

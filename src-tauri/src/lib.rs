@@ -5,15 +5,13 @@ use commands::*;
 use tauri::AppHandle;
 use utils::resolve_resource_dir;
 
-use crate::{
-    commands::{load_regions_graph, projects::get_projects},
-    config::AppConfig,
-};
+use crate::{commands::load_regions_graph, config::AppConfig};
 
 pub mod commands;
 pub mod config;
-pub mod fetch_resources;
+pub mod error;
 pub mod gis_operation;
+pub mod services;
 pub mod types;
 pub mod utils;
 

@@ -6,21 +6,13 @@ use std::fs::{self};
 use std::path::Path;
 
 use crate::types::{BoundingBox, Driver, GTiff, Region, get_region};
-use crate::utils::{executor, resolution, resource_dir};
+use crate::utils::{execute_sidecar, resolution, resource_dir};
 
-pub mod layers;
 pub mod merger;
 pub mod overlay;
-pub mod processing;
-pub mod slicing;
-pub mod wms_layer;
 
-pub use layers::prelude::*;
 pub use merger::{MergeOptions, Merger};
 pub use overlay::Overlay;
-pub use processing::prelude::*;
-pub use slicing::prelude::*;
-pub use wms_layer::prelude::*;
 
 /// Crée un fichier raster de référence avec une résolution donnée (10m/pixel)
 /// et calcule la taille de l'image en fonction de la boîte englobante
@@ -146,7 +138,7 @@ pub async fn convert_to_gpkg(
         "YES",
     ];
 
-    executor("ogr2ogr", &args).await?;
+    execute_sidecar("ogr2ogr", &args).await?;
 
     Ok(())
 }
@@ -175,10 +167,10 @@ pub async fn fusion_datasets(
 
     let first_dataset = &datasets[0];
 
-    executor("ogr2ogr", &["-f", "GPKG", output_gpkg, first_dataset]).await?;
+    execute_sidecar("ogr2ogr", &["-f", "GPKG", output_gpkg, first_dataset]).await?;
 
     for dataset in datasets.iter().skip(1) {
-        executor(
+        execute_sidecar(
             "ogr2ogr",
             &["-f", "GPKG", "-append", "-update", output_gpkg, dataset],
         )
@@ -232,7 +224,7 @@ pub async fn clip_to_bb(
         "YES",
     ];
 
-    executor("ogr2ogr", &args).await?;
+    execute_sidecar("ogr2ogr", &args).await?;
 
     Ok(())
 }
