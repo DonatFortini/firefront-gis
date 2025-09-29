@@ -42,7 +42,7 @@ fn test_find_multiple_intersecting_regions() {
     );
     println!("Number of intersecting regions: {}", result.len());
     for region in &result {
-        println!("Intersecting region: {}", region.get_name());
+        println!("Intersecting region: {}", region.name());
     }
 }
 

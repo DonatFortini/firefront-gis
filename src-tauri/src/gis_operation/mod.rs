@@ -249,12 +249,12 @@ pub async fn clip_to_bb(
 /// * `Result<(), Box<dyn Error>>` - un résultat indiquant si la création du fichier a réussi ou échoué
 pub fn create_region_geojson(region_id: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
     let region = get_region(region_id)?;
-    let geometry: geojson::Geometry = region.get_extent().into();
+    let geometry: geojson::Geometry = region.extent().into();
 
     let properties = serde_json::json!({
-        "code": region.get_code(),
-        "name": region.get_name(),
-        "neighbors": region.get_neighbors()
+        "code": region.code(),
+        "name": region.name(),
+        "neighbors": region.neighbors()
     });
 
     let feature = geojson::Feature {
@@ -362,10 +362,10 @@ pub async fn build_regions_graph(output_file: Option<&str>) -> Result<bool, Box<
 
     for i in 0..region_codes.len() {
         let code_i = &region_codes[i];
-        let geom_i = regions_info[code_i].get_extent().clone();
+        let geom_i = regions_info[code_i].extent().clone();
 
         for code_j in &region_codes[i + 1..] {
-            let geom_j = regions_info[code_j].get_extent().clone();
+            let geom_j = regions_info[code_j].extent().clone();
 
             if geom_i.intersects(&geom_j) || geom_i.relate(&geom_j).is_touches() {
                 regions_info

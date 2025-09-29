@@ -1,5 +1,4 @@
 use geo::Geometry;
-use geo_types::Error as GeoError;
 use geo_types::{Coord, Polygon};
 use serde::{Deserialize, Serialize};
 use wkt::{ToWkt, Wkt};
@@ -14,7 +13,7 @@ pub struct BoundingBox {
 
 impl Default for BoundingBox {
     fn default() -> Self {
-        BoundingBox {
+        Self {
             xmin: 0.0,
             ymin: 0.0,
             xmax: 1.0,
@@ -25,7 +24,7 @@ impl Default for BoundingBox {
 
 impl BoundingBox {
     pub fn new(xmin: f64, ymin: f64, xmax: f64, ymax: f64) -> Self {
-        BoundingBox {
+        Self {
             xmin,
             ymin,
             xmax,
@@ -41,60 +40,43 @@ impl BoundingBox {
         self.ymax - self.ymin
     }
 
-    pub fn to_wkt(&self) -> Wkt<f64> {
-        let coords = vec![
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-        ];
+    pub fn area(&self) -> f64 {
+        self.width() * self.height()
+    }
 
-        let polygon = Polygon::new(coords.into(), vec![]);
+    fn to_polygon_coords(self) -> Vec<Coord<f64>> {
+        vec![
+            Coord {
+                x: self.xmin,
+                y: self.ymin,
+            },
+            Coord {
+                x: self.xmax,
+                y: self.ymin,
+            },
+            Coord {
+                x: self.xmax,
+                y: self.ymax,
+            },
+            Coord {
+                x: self.xmin,
+                y: self.ymax,
+            },
+            Coord {
+                x: self.xmin,
+                y: self.ymin,
+            },
+        ]
+    }
+
+    pub fn to_wkt(&self) -> Wkt<f64> {
+        let polygon = Polygon::new(self.to_polygon_coords().into(), vec![]);
         polygon.to_wkt()
     }
 
-    pub fn to_geometry(&self) -> Result<Geometry, GeoError> {
-        let coords = vec![
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymin,
-            },
-            Coord {
-                x: self.xmax,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymax,
-            },
-            Coord {
-                x: self.xmin,
-                y: self.ymin,
-            },
-        ];
-
-        let polygon = Polygon::new(coords.into(), vec![]);
-        Ok(Geometry::from(polygon))
+    pub fn to_geometry(&self) -> Geometry<f64> {
+        let polygon = Polygon::new(self.to_polygon_coords().into(), vec![]);
+        Geometry::from(polygon)
     }
 
     pub fn intersects(&self, other: &BoundingBox) -> bool {
@@ -109,6 +91,28 @@ impl BoundingBox {
             && self.xmax >= other.xmax
             && self.ymin <= other.ymin
             && self.ymax >= other.ymax
+    }
+
+    pub fn union(&self, other: &BoundingBox) -> BoundingBox {
+        BoundingBox::new(
+            self.xmin.min(other.xmin),
+            self.ymin.min(other.ymin),
+            self.xmax.max(other.xmax),
+            self.ymax.max(other.ymax),
+        )
+    }
+
+    pub fn intersection(&self, other: &BoundingBox) -> Option<BoundingBox> {
+        if !self.intersects(other) {
+            return None;
+        }
+
+        Some(BoundingBox::new(
+            self.xmin.max(other.xmin),
+            self.ymin.max(other.ymin),
+            self.xmax.min(other.xmax),
+            self.ymax.min(other.ymax),
+        ))
     }
 }
 
