@@ -10,7 +10,6 @@ use crate::{commands::load_regions_graph, config::AppConfig};
 pub mod commands;
 pub mod config;
 pub mod error;
-pub mod gis_operation;
 pub mod services;
 pub mod types;
 pub mod utils;

@@ -1,10 +1,13 @@
 use std::collections::HashMap;
+use std::path::Path;
 use tauri::command;
 
 use crate::config::get_config;
 use crate::services::ProjectService;
 use crate::types::BoundingBox;
-use crate::utils::{cache_dir, create_directory_if_not_exists, get_operating_system};
+use crate::utils::{
+    build_regions_graph, cache_dir, create_directory_if_not_exists, get_operating_system,
+};
 
 #[command]
 pub fn get_projects() -> Result<HashMap<String, Vec<String>>, String> {
@@ -79,9 +82,6 @@ pub fn clear_cache() -> Result<String, String> {
 
 #[command]
 pub async fn load_regions_graph() -> Result<(), String> {
-    use crate::gis_operation::build_regions_graph;
-    use std::path::Path;
-
     let graph_path = get_config(|config| config.regions_graph_path());
 
     if !Path::new(&graph_path).exists() {

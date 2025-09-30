@@ -12,7 +12,7 @@ use crate::error::{GisError, GisResult};
 use crate::services::ArchiveService;
 use crate::types::{BoundingBox, Dataset, Driver, GTiff, Region, get_region};
 use crate::utils::{
-    LayerProgress, PathBuilder, VulcainColors, cache_dir, clean_tmp,
+    LayerProgress, Overlay, PathBuilder, VulcainColors, cache_dir, clean_tmp,
     create_directory_if_not_exists, execute_sidecar, projects_dir, resolution, resource_dir,
 };
 
@@ -941,7 +941,6 @@ impl LayerProcessor {
         )
         .await?;
 
-        use crate::gis_operation::Overlay;
         let mut overlay = Overlay::new();
         overlay
             .apply_overlay(project_file, &temp_layer, |&v| v > 0, Some([0, 0, 0]))
@@ -978,7 +977,6 @@ impl LayerProcessor {
         )
         .await?;
 
-        use crate::gis_operation::Overlay;
         let mut overlay = Overlay::new();
         overlay
             .apply_overlay(project_file, &temp_layer, |&v| v > 0, None)
@@ -1036,7 +1034,6 @@ impl LayerProcessor {
             )
             .await?;
 
-            use crate::gis_operation::Overlay;
             let mut overlay = Overlay::new();
             overlay
                 .apply_overlay(project_file, &temp_layer, |&v| v > 0, None)
@@ -1077,7 +1074,6 @@ impl LayerProcessor {
         )
         .await?;
 
-        use crate::gis_operation::Overlay;
         let mut overlay = Overlay::new();
         overlay
             .apply_overlay(project_file, &temp_layer, |&v| v > 0, None)
