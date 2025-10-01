@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::error::{ProjectError, ProjectResult};
-use crate::services::{ArchiveService, DataService, GisService};
+use crate::services::{
+    ArchiveService, FetchService, ProcessingService, RasterService, VectorService,
+};
 use crate::types::BoundingBox;
 use crate::types::regions::find_intersecting_regions;
 use crate::utils::{
@@ -84,7 +86,7 @@ impl ProjectService {
 
         println!("Exporting project: {}", name);
 
-        GisService::slice_images(name, slice_factor_value)
+        RasterService::slice_images(name, slice_factor_value)
             .await
             .map_err(|e| ProjectError::ExportFailed {
                 project: name.to_string(),
@@ -129,7 +131,7 @@ impl ProjectService {
 
         let project_file_path = format!("{}/{}.tiff", project_folder, name);
         Progress::status("Ajout des couches");
-        GisService::add_all_layers(&project_file_path)
+        ProcessingService::add_all_layers(&project_file_path)
             .await
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
@@ -142,7 +144,7 @@ impl ProjectService {
     async fn download_data_phase(region_codes: &[String]) -> ProjectResult<()> {
         Progress::status("Téléchargement des données");
 
-        let urls = DataService::get_shp_file_urls(region_codes)
+        let urls = FetchService::get_shp_file_urls(region_codes)
             .await
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
@@ -160,8 +162,8 @@ impl ProjectService {
                 download.file_progress(file_type, idx * 3 + type_idx + 1, total);
 
                 let cache_name = format!("{}_{}.7z", file_type, code);
-                if !DataService::is_in_cache(&cache_name) {
-                    DataService::download_shp_file(&urls[url_idx], code)
+                if !FetchService::is_in_cache(&cache_name) {
+                    FetchService::download_shp_file(&urls[url_idx], code)
                         .await
                         .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
                 }
@@ -191,7 +193,7 @@ impl ProjectService {
         std::fs::create_dir_all(project_folder.join("slices"))?;
 
         tracker.set_step(2, "Configuration du projet");
-        GisService::create_reference_raster(&project_file.to_string_lossy(), project_bb)
+        RasterService::create_reference_raster(&project_file.to_string_lossy(), project_bb)
             .await
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
@@ -221,7 +223,7 @@ impl ProjectService {
 
             clean_tmp(Some(".gpkg")).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
-            let (r, v, rp, t) = GisService::prepare_layers(project_bb, code)
+            let (r, v, rp, t) = ProcessingService::prepare_layers(project_bb, code)
                 .await
                 .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
@@ -271,24 +273,24 @@ impl ProjectService {
             let mut tracker = ProgressTracker::new("Fusion des données", 4);
 
             tracker.set_step(1, "Fusion des couches régionales");
-            GisService::merge_datasets(&regional, &regional_out)
+            VectorService::merge_datasets(&regional, &regional_out)
                 .await
                 .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
             tracker.set_step(2, "Fusion des couches de végétation");
-            GisService::merge_datasets(&vegetation, &vegetation_out)
+            VectorService::merge_datasets(&vegetation, &vegetation_out)
                 .await
                 .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
             tracker.set_step(3, "Fusion des couches RPG");
-            GisService::merge_datasets(&rpg, &rpg_out)
+            VectorService::merge_datasets(&rpg, &rpg_out)
                 .await
                 .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
             tracker.set_step(4, "Fusion des couches topographiques");
             for (layer_name, paths) in &topo {
                 let topo_out = format!("{}/resources/{}.gpkg", project_folder, layer_name);
-                GisService::merge_datasets(paths, &topo_out)
+                VectorService::merge_datasets(paths, &topo_out)
                     .await
                     .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
             }
@@ -325,7 +327,7 @@ impl ProjectService {
         .await?;
 
         tracker.set_step(2, "Téléchargement d'orthophoto");
-        GisService::fetch_orthophoto(
+        FetchService::fetch_orthophoto(
             &format!("{}/{}_ORTHO.jpeg", project_folder, name),
             project_bb,
         )

@@ -3,11 +3,15 @@ use futures_util::StreamExt;
 use regex::Regex;
 use reqwest;
 use scraper::{Html, Selector};
+use std::fs;
 use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use crate::error::{DataError, DataResult};
-use crate::utils::{cache_dir, execute_sidecar, get_rpg_for_dep_code};
+use crate::types::BoundingBox;
+use crate::utils::{cache_dir, create_directory_if_not_exists, get_rpg_for_dep_code, resolution};
 
 #[derive(Debug, Clone, Copy)]
 pub enum DatabaseType {
@@ -42,9 +46,9 @@ impl DatabaseType {
     }
 }
 
-pub struct DataService;
+pub struct FetchService;
 
-impl DataService {
+impl FetchService {
     pub async fn get_shp_file_urls(codes: &[String]) -> DataResult<Vec<String>> {
         let url_topo = "https://geoservices.ign.fr/bdtopo#";
         let url_foret = "https://geoservices.ign.fr/bdforet#";
@@ -150,94 +154,104 @@ impl DataService {
     pub fn is_in_cache(name: &str) -> bool {
         cache_dir().join(name).exists()
     }
-}
 
-pub struct ArchiveService;
-
-impl ArchiveService {
-    pub async fn compress_folder(
-        source_folder: &str,
-        output_name: &str,
-        destination: &str,
-    ) -> DataResult<()> {
-        let output_path = format!("{destination}/{output_name}.zip");
-
-        execute_sidecar("_7z", &["a", &output_path, &format!("{}/*", source_folder)])
-            .await
+    pub async fn fetch_orthophoto(output_path: &str, project_bb: &BoundingBox) -> DataResult<()> {
+        let wms_cache = cache_dir().join("wms_cache");
+        create_directory_if_not_exists(&wms_cache.to_string_lossy())
             .map_err(|e| DataError::ExtractionFailed(e.to_string()))?;
 
-        println!("Successfully compressed '{source_folder}' to '{output_path}'");
-        Ok(())
-    }
+        let res = resolution();
+        let width = ((project_bb.xmax - project_bb.xmin) / res).ceil() as usize;
+        let height = ((project_bb.ymax - project_bb.ymin) / res).ceil() as usize;
 
-    pub async fn extract_files_by_name(
-        archive_path: &str,
-        target_filename: &str,
-        output_dir: &str,
-    ) -> DataResult<()> {
-        let output_path = Path::new(output_dir);
-        let temp_extract_dir = output_path.join("temp_extract");
+        println!("Dimensions: width={}, height={} pixels", width, height);
 
-        std::fs::create_dir_all(output_path)?;
-        std::fs::create_dir_all(&temp_extract_dir)?;
+        let cache_key = format!(
+            "{:.6}_{:.6}_{:.6}_{:.6}_{}x{}",
+            project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
+        );
+        let cache_file = wms_cache.join(format!("satellite_{}.jpg", cache_key));
 
-        execute_sidecar(
-            "_7z",
-            &[
-                "x",
-                archive_path,
-                &format!("-o{}", temp_extract_dir.display()),
-            ],
-        )
-        .await
-        .map_err(|e| DataError::ExtractionFailed(e.to_string()))?;
-
-        let mut found_files = Vec::new();
-        Self::find_files_recursive(&temp_extract_dir, target_filename, &mut found_files)?;
-
-        if found_files.is_empty() {
-            std::fs::remove_dir_all(&temp_extract_dir)?;
-            return Err(DataError::NoMatchingFiles {
-                pattern: target_filename.to_string(),
-            });
-        }
-
-        let destination = output_path.join(target_filename);
-        std::fs::create_dir_all(&destination)?;
-
-        for file_path in found_files {
-            if let Some(file_name) = file_path.file_name() {
-                std::fs::copy(&file_path, destination.join(file_name))?;
+        if cache_file.exists() {
+            if let Ok(metadata) = fs::metadata(&cache_file)
+                && metadata.len() > 0
+            {
+                fs::copy(&cache_file, output_path)?;
+                println!("Retrieved from cache: {} bytes", metadata.len());
+                return Ok(());
             }
+            let _ = fs::remove_file(&cache_file);
         }
 
-        std::fs::remove_dir_all(temp_extract_dir)?;
-        Ok(())
-    }
+        let wms_url = format!(
+            "https://data.geopf.fr/wms-r/wms?\
+            SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&\
+            LAYERS=ORTHOIMAGERY.ORTHOPHOTOS&STYLES=&CRS=EPSG:2154&\
+            BBOX={},{},{},{}&WIDTH={}&HEIGHT={}&FORMAT=image/jpeg",
+            project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
+        );
 
-    fn find_files_recursive(
-        dir: &Path,
-        target_basename: &str,
-        result: &mut Vec<std::path::PathBuf>,
-    ) -> DataResult<()> {
-        if !dir.is_dir() {
-            return Ok(());
-        }
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .user_agent("Rust WMS Client")
+            .build()
+            .map_err(DataError::Http)?;
 
-        for entry in std::fs::read_dir(dir)? {
-            let path = entry?.path();
+        let mut image_data = Vec::new();
+        let max_attempts = 3;
 
-            if path.is_file() {
-                if let Some(file_stem) = path.file_stem()
-                    && file_stem.to_string_lossy() == target_basename
-                {
-                    result.push(path);
+        for attempt in 1..=max_attempts {
+            println!("Download attempt {}/{}", attempt, max_attempts);
+
+            match Self::download_wms_image(&client, &wms_url).await {
+                Ok(data) => {
+                    image_data = data;
+                    break;
                 }
-            } else if path.is_dir() {
-                Self::find_files_recursive(&path, target_basename, result)?;
+                Err(e) if attempt < max_attempts => {
+                    println!("Attempt {} failed: {}", attempt, e);
+                    sleep(Duration::from_secs(5));
+                }
+                Err(e) => return Err(e),
             }
         }
 
+        let temp_cache = format!("{}.tmp", cache_file.to_string_lossy());
+        fs::write(&temp_cache, &image_data)?;
+        fs::rename(&temp_cache, &cache_file)?;
+        fs::copy(&cache_file, output_path)?;
+
+        println!("Orthophoto downloaded: {} bytes", image_data.len());
         Ok(())
+    }
+
+    async fn download_wms_image(client: &reqwest::Client, url: &str) -> DataResult<Vec<u8>> {
+        let response = client.get(url).send().await.map_err(DataError::Http)?;
+
+        if !response.status().is_success() {
+            return Err(DataError::Http(response.error_for_status().unwrap_err()));
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|ct| ct.to_str().ok())
+            .unwrap_or("");
+
+        if !content_type.starts_with("image/") {
+            let error_text = response.text().await.map_err(DataError::Http)?;
+            return Err(DataError::Scraping(format!(
+                "Server error: {}",
+                &error_text[..error_text.len().min(200)]
+            )));
+        }
+
+        let image_data = response.bytes().await.map_err(DataError::Http)?.to_vec();
+
+        if image_data.len() < 10 || image_data[0] != 0xFF || image_data[1] != 0xD8 {
+            return Err(DataError::Scraping("Invalid JPEG data".to_string()));
+        }
+
+        Ok(image_data)
     }
 }

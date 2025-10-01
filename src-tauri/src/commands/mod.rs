@@ -3,11 +3,9 @@ use std::path::Path;
 use tauri::command;
 
 use crate::config::get_config;
-use crate::services::ProjectService;
+use crate::services::{ProjectService, RegionService};
 use crate::types::BoundingBox;
-use crate::utils::{
-    build_regions_graph, cache_dir, create_directory_if_not_exists, get_operating_system,
-};
+use crate::utils::{cache_dir, create_directory_if_not_exists, get_operating_system};
 
 #[command]
 pub fn get_projects() -> Result<HashMap<String, Vec<String>>, String> {
@@ -86,7 +84,7 @@ pub async fn load_regions_graph() -> Result<(), String> {
 
     if !Path::new(&graph_path).exists() {
         println!("Regions graph file not found, building...");
-        build_regions_graph(graph_path.to_str())
+        RegionService::build_regions_graph(graph_path.to_str())
             .await
             .map_err(|e| format!("Failed to build regions graph: {}", e))?;
     }

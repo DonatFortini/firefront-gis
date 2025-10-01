@@ -1,6 +1,68 @@
+use std::path::{Path, PathBuf};
+
+use crate::error::{GisError, GisResult};
 use crate::types::Dataset;
 use crate::utils::{clean_tmp, execute_sidecar, temp_dir};
-use std::path::{Path, PathBuf};
+
+pub struct LayerService;
+
+impl LayerService {
+    pub async fn rasterize_layer(
+        project_path: &str,
+        vector_gpkg: &str,
+        layer_name: &str,
+        output_raster: &str,
+        burn_values: [&str; 3],
+        where_clause: Option<&str>,
+    ) -> GisResult<()> {
+        let project = Dataset::open(project_path)
+            .await
+            .map_err(|e| GisError::Dataset(e.to_string()))?;
+
+        let bbox = project.bbox();
+        let (width, height) = project
+            .raster_size()
+            .map_err(|e| GisError::Dataset(e.to_string()))?;
+
+        let width_str = width.to_string();
+        let height_str = height.to_string();
+        let xmin_str = bbox.xmin.to_string();
+        let ymin_str = bbox.ymin.to_string();
+        let xmax_str = bbox.xmax.to_string();
+        let ymax_str = bbox.ymax.to_string();
+
+        let mut args = vec![
+            "-burn",
+            burn_values[0],
+            "-burn",
+            burn_values[1],
+            "-burn",
+            burn_values[2],
+            "-l",
+            layer_name,
+            "-ts",
+            &width_str,
+            &height_str,
+            "-te",
+            &xmin_str,
+            &ymin_str,
+            &xmax_str,
+            &ymax_str,
+        ];
+
+        if let Some(clause) = where_clause {
+            args.extend_from_slice(&["-where", clause]);
+        }
+
+        args.extend_from_slice(&[vector_gpkg, output_raster]);
+
+        execute_sidecar("gdal_rasterize", &args)
+            .await
+            .map_err(|e| GisError::RasterizationFailed(e.to_string()))?;
+
+        Ok(())
+    }
+}
 
 struct OverlayContext<'a> {
     width: usize,
@@ -133,10 +195,8 @@ impl Overlay {
             let mut project_data = std::fs::read(project_band_file)
                 .map_err(|e| format!("Failed to read project band {}: {}", i + 1, e))?;
 
-            // Apply overlay based on strategy
             match context.fixed_color {
                 None => {
-                    // Use overlay data directly
                     if i < context.overlay_bands.len() {
                         let overlay_data = std::fs::read(&context.overlay_bands[i])
                             .map_err(|e| format!("Failed to read overlay band {}: {}", i + 1, e))?;

@@ -1,7 +1,7 @@
-mod data_service;
-mod gis_service;
+pub mod data;
+pub mod gis;
 mod project_service;
 
-pub use data_service::{ArchiveService, DataService, DatabaseType};
-pub use gis_service::GisService;
+pub use data::{ArchiveService, DatabaseType, FetchService, ProcessingService};
+pub use gis::{LayerService, Overlay, RasterService, RegionService, VectorService};
 pub use project_service::ProjectService;
