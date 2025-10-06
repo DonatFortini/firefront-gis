@@ -57,8 +57,6 @@ pub enum DataError {
 pub enum ProjectError {
     #[error("Project '{name}' not found")]
     NotFound { name: String },
-    #[error("Project '{name}' already exists")]
-    AlreadyExists { name: String },
     #[error("Invalid project structure: {0}")]
     InvalidStructure(String),
     #[error("Export failed for project '{project}': {message}")]

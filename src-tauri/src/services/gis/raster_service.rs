@@ -2,10 +2,9 @@ use image::{DynamicImage, GenericImageView};
 use std::path::Path;
 
 use crate::error::{GisError, GisResult};
+use crate::services::ProjectService;
 use crate::types::{BoundingBox, Driver, GTiff};
 use crate::utils::{create_directory_if_not_exists, projects_dir, resolution};
-
-use super::VectorService;
 
 pub struct RasterService;
 
@@ -67,7 +66,7 @@ impl RasterService {
         Ok(())
     }
 
-    pub async fn slice_images(project_name: &str, slice_factor: u32) -> GisResult<String> {
+    pub async fn slice_project(project_name: &str, slice_factor: u32) -> GisResult<String> {
         let project_dir = projects_dir().join(project_name);
         let slice_dir = project_dir.join("slices");
 
@@ -80,7 +79,7 @@ impl RasterService {
         let veget_image = Self::load_image(&veget_path)?;
         let ortho_image = Self::load_image(&ortho_path)?;
 
-        let project_bb = VectorService::get_project_bounding_box(project_name).await?;
+        let project_bb = ProjectService::get_project_bounding_box(project_name).await?;
         let (base_x, base_y) = (
             (project_bb.xmin / 1000.0) as u32,
             (project_bb.ymin / 1000.0) as u32,

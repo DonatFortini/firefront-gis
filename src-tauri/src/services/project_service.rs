@@ -1,18 +1,21 @@
 use std::collections::HashMap;
 
-use crate::error::{ProjectError, ProjectResult};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tokio::fs;
+
+use crate::error::{GisError, GisResult, ProjectError, ProjectResult};
 use crate::services::{
     ArchiveService, FetchService, ProcessingService, RasterService, VectorService,
 };
 use crate::types::BoundingBox;
 use crate::types::regions::find_intersecting_regions;
 use crate::utils::{
-    DownloadProgress, Progress, ProgressTracker, clean_tmp, execute_sidecar, output_location,
+    Progress, ProgressTracker, clean_tmp, execute_sidecar, get_handle, output_location,
     projects_dir, slice_factor,
 };
 
 pub struct ProjectService;
-
+//TODO: ajout metadata projet
 impl ProjectService {
     pub fn list_projects() -> ProjectResult<HashMap<String, Vec<String>>> {
         let projects_path = projects_dir();
@@ -43,6 +46,35 @@ impl ProjectService {
         }
 
         Ok(projects)
+    }
+
+    pub async fn get_project_bounding_box(project_name: &str) -> GisResult<BoundingBox> {
+        let tiff_path = format!(
+            "{}/{}/{}.tiff",
+            projects_dir().to_string_lossy(),
+            project_name,
+            project_name
+        );
+
+        let (output, _) = execute_sidecar("gdalinfo", &[&tiff_path, "-json"])
+            .await
+            .map_err(|e| GisError::GdalOperation {
+                operation: "gdalinfo".to_string(),
+                message: e.to_string(),
+            })?;
+
+        let json: serde_json::Value = serde_json::from_str(&output)?;
+
+        let coords = json["cornerCoordinates"]
+            .as_object()
+            .ok_or_else(|| GisError::Dataset("Invalid gdalinfo output".to_string()))?;
+
+        Ok(BoundingBox {
+            xmin: coords["lowerLeft"][0].as_f64().unwrap(),
+            ymin: coords["lowerLeft"][1].as_f64().unwrap(),
+            xmax: coords["upperRight"][0].as_f64().unwrap(),
+            ymax: coords["upperRight"][1].as_f64().unwrap(),
+        })
     }
 
     pub fn get_project_data(name: &str, data_file: &str) -> ProjectResult<String> {
@@ -86,7 +118,7 @@ impl ProjectService {
 
         println!("Exporting project: {}", name);
 
-        RasterService::slice_images(name, slice_factor_value)
+        RasterService::slice_project(name, slice_factor_value)
             .await
             .map_err(|e| ProjectError::ExportFailed {
                 project: name.to_string(),
@@ -112,7 +144,7 @@ impl ProjectService {
         Ok(())
     }
 
-    pub async fn create_project(name: String, project_bb: BoundingBox) -> ProjectResult<String> {
+    pub async fn create_project(name: String, project_bb: BoundingBox) -> ProjectResult<()> {
         Progress::status("Recherche des régions");
         let regions = find_intersecting_regions(&project_bb)
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
@@ -121,7 +153,7 @@ impl ProjectService {
             return Err(ProjectError::NoIntersectingRegions);
         }
 
-        let region_codes: Vec<String> = regions.iter().map(|r| r.code.clone()).collect();
+        let region_codes: Vec<&str> = regions.iter().map(|r| r.code.as_str()).collect();
 
         Self::download_data_phase(&region_codes).await?;
 
@@ -138,37 +170,17 @@ impl ProjectService {
         Self::finalize_project(&name, &project_folder, &project_file_path, &project_bb).await?;
 
         Progress::status("Projet créé avec succès");
-        Ok(project_folder)
+        Ok(())
     }
 
-    async fn download_data_phase(region_codes: &[String]) -> ProjectResult<()> {
+    async fn download_data_phase(region_codes: &[&str]) -> ProjectResult<()> {
         Progress::status("Téléchargement des données");
 
-        let urls = FetchService::get_shp_file_urls(region_codes)
+        FetchService::fetch_data_sources(region_codes)
             .await
-            .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
-
-        let download = DownloadProgress::new();
-        let file_types = ["BDTOPO", "BDFORET", "RPG"];
-        let total = urls.len();
-
-        for (idx, (code_idx, code)) in region_codes.iter().enumerate().enumerate() {
-            for (type_idx, file_type) in file_types.iter().enumerate() {
-                let url_idx = code_idx * 3 + type_idx;
-                if url_idx >= urls.len() {
-                    break;
-                }
-
-                download.file_progress(file_type, idx * 3 + type_idx + 1, total);
-
-                let cache_name = format!("{}_{}.7z", file_type, code);
-                if !FetchService::is_in_cache(&cache_name) {
-                    FetchService::download_shp_file(&urls[url_idx], code)
-                        .await
-                        .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
-                }
-            }
-        }
+            .map_err(|e| {
+                ProjectError::CreationFailed(format!("Échec du téléchargement des données: {}", e))
+            })?;
 
         Ok(())
     }
@@ -180,15 +192,24 @@ impl ProjectService {
         let project_file = project_folder.join(format!("{}.tiff", name));
 
         if project_file.exists() {
-            return Err(ProjectError::AlreadyExists {
-                name: name.to_string(),
-            });
+            let should_overwrite = get_handle()
+                .unwrap()
+                .dialog()
+                .message("Voulez-vous écraser le projet existant ?")
+                .title("Projet dejà existant")
+                .buttons(MessageDialogButtons::YesNo)
+                .blocking_show();
+
+            if !should_overwrite {
+                return Ok("Project creation cancelled".to_string());
+            }
+
+            std::fs::remove_dir_all(&project_folder).unwrap();
         }
 
         let mut tracker = ProgressTracker::new("Initialisation du projet", 2);
 
         tracker.set_step(1, "Création des dossiers");
-        std::fs::create_dir_all(&project_folder)?;
         std::fs::create_dir_all(project_folder.join("resources"))?;
         std::fs::create_dir_all(project_folder.join("slices"))?;
 
@@ -202,7 +223,7 @@ impl ProjectService {
 
     async fn prepare_layers_phase(
         name: &str,
-        region_codes: &[String],
+        region_codes: &[&str],
         project_bb: &BoundingBox,
         project_folder: &str,
     ) -> ProjectResult<()> {
@@ -327,12 +348,15 @@ impl ProjectService {
         .await?;
 
         tracker.set_step(2, "Téléchargement d'orthophoto");
-        FetchService::fetch_orthophoto(
-            &format!("{}/{}_ORTHO.jpeg", project_folder, name),
-            project_bb,
+        let ortho_path = FetchService::fetch_orthophoto(project_bb)
+            .await
+            .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+
+        fs::copy(
+            ortho_path,
+            format!("{}/{}_ORTHO.jpeg", project_folder, name),
         )
-        .await
-        .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+        .await?;
 
         Progress::status("Nettoyage");
         clean_tmp(None).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;

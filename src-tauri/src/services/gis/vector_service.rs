@@ -1,9 +1,8 @@
-use serde_json::Value;
 use std::fs;
 
 use crate::error::{GisError, GisResult};
 use crate::types::BoundingBox;
-use crate::utils::{execute_sidecar, projects_dir};
+use crate::utils::execute_sidecar;
 
 pub struct VectorService;
 
@@ -111,35 +110,6 @@ impl VectorService {
             })?;
 
         Ok(())
-    }
-
-    pub async fn get_project_bounding_box(project_name: &str) -> GisResult<BoundingBox> {
-        let tiff_path = format!(
-            "{}/{}/{}.tiff",
-            projects_dir().to_string_lossy(),
-            project_name,
-            project_name
-        );
-
-        let (output, _) = execute_sidecar("gdalinfo", &[&tiff_path, "-json"])
-            .await
-            .map_err(|e| GisError::GdalOperation {
-                operation: "gdalinfo".to_string(),
-                message: e.to_string(),
-            })?;
-
-        let json: Value = serde_json::from_str(&output)?;
-
-        let coords = json["cornerCoordinates"]
-            .as_object()
-            .ok_or_else(|| GisError::Dataset("Invalid gdalinfo output".to_string()))?;
-
-        Ok(BoundingBox {
-            xmin: coords["lowerLeft"][0].as_f64().unwrap(),
-            ymin: coords["lowerLeft"][1].as_f64().unwrap(),
-            xmax: coords["upperRight"][0].as_f64().unwrap(),
-            ymax: coords["upperRight"][1].as_f64().unwrap(),
-        })
     }
 
     pub async fn get_geojson_bbox(file_path: &str) -> GisResult<BoundingBox> {

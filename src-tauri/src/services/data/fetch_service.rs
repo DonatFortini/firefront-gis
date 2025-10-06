@@ -3,104 +3,91 @@ use futures_util::StreamExt;
 use regex::Regex;
 use reqwest;
 use scraper::{Html, Selector};
-use std::fs;
-use std::path::Path;
+use std::collections::HashMap;
 use std::thread::sleep;
 use std::time::Duration;
+use tokio::time::Instant;
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use crate::error::{DataError, DataResult};
 use crate::types::BoundingBox;
-use crate::utils::{cache_dir, create_directory_if_not_exists, get_rpg_for_dep_code, resolution};
-
-#[derive(Debug, Clone, Copy)]
-pub enum DatabaseType {
-    Foret,
-    Topo,
-    Rpg,
-}
-
-impl DatabaseType {
-    fn from_url(url: &str) -> DataResult<Self> {
-        match url {
-            url if url.contains("bdforet#") => Ok(Self::Foret),
-            url if url.contains("bdtopo#") => Ok(Self::Topo),
-            url if url.contains("rpg#") => Ok(Self::Rpg),
-            _ => Err(DataError::UnsupportedDbType),
-        }
-    }
-
-    fn code_prefix(&self) -> &'static str {
-        match self {
-            Self::Rpg => "R",
-            _ => "D0",
-        }
-    }
-
-    fn archive_name(&self) -> &'static str {
-        match self {
-            Self::Foret => "BDFORET",
-            Self::Topo => "BDTOPO",
-            Self::Rpg => "RPG",
-        }
-    }
-}
+use crate::utils::{
+    DownloadProgress, cache_dir, get_data_sources, get_rpg_for_dep_code, in_cache_dir, resolution,
+    wms_cache_dir,
+};
 
 pub struct FetchService;
 
 impl FetchService {
-    pub async fn get_shp_file_urls(codes: &[String]) -> DataResult<Vec<String>> {
-        let url_topo = "https://geoservices.ign.fr/bdtopo#";
-        let url_foret = "https://geoservices.ign.fr/bdforet#";
-        let url_rpg = "https://geoservices.ign.fr/rpg#";
+    // ====================
+    // atomic download file
+    // ====================
 
-        let mut urls = Vec::new();
+    async fn download_file(
+        client: &reqwest::Client,
+        url: &str,
+        path: &str,
+        progress: &DownloadProgress,
+    ) -> DataResult<()> {
+        let response = client.get(url).send().await?;
+        let total_size = response.content_length();
 
-        for code in codes {
-            urls.push(Self::get_departement_shp_url(code, url_topo).await?);
-            urls.push(Self::get_departement_shp_url(code, url_foret).await?);
+        let mut file = File::create(path).await?;
+        let mut stream = response.bytes_stream();
 
-            let rpg_code = get_rpg_for_dep_code(code)
-                .ok_or_else(|| DataError::Scraping(format!("No RPG code for {}", code)))?;
-            urls.push(Self::get_departement_shp_url(rpg_code, url_rpg).await?);
-        }
+        let mut downloaded: u64 = 0;
+        let start_time = Instant::now();
+        let mut last_update = Instant::now();
 
-        Ok(urls)
-    }
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            file.write_all(&chunk).await?;
 
-    async fn get_departement_shp_url(code: &str, url: &str) -> DataResult<String> {
-        let body = reqwest::get(url).await?.text().await?;
-        let document = Html::parse_document(&body);
-        let selector = Selector::parse("a")
-            .map_err(|e| DataError::Scraping(format!("Selector error: {}", e)))?;
+            downloaded += chunk.len() as u64;
 
-        let db_type = DatabaseType::from_url(url)?;
-        let code_prefix = db_type.code_prefix();
+            if last_update.elapsed().as_millis() > 500 {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let downloaded_mb = downloaded as f64 / 1_048_576.0;
+                let speed_mbps = downloaded_mb / elapsed_secs;
 
-        let mut shp_files: Vec<String> = document
-            .select(&selector)
-            .filter_map(|element| element.value().attr("href"))
-            .filter(|href| href.contains(&format!("{code_prefix}{code}")) && href.contains("SHP"))
-            .map(|s| s.to_string())
-            .collect();
+                if let Some(total) = total_size {
+                    let total_mb = total as f64 / 1_048_576.0;
+                    let remaining_bytes = total - downloaded;
+                    let eta_secs = if speed_mbps > 0.0 {
+                        (remaining_bytes as f64 / 1_048_576.0 / speed_mbps) as u64
+                    } else {
+                        0
+                    };
+                    progress.download_detail(downloaded_mb, total_mb, speed_mbps, eta_secs);
+                } else {
+                    progress.download_detail(downloaded_mb, 0.0, speed_mbps, 0);
+                }
 
-        if shp_files.is_empty() {
-            return Err(DataError::Scraping("No file found".to_string()));
-        }
-
-        if matches!(db_type, DatabaseType::Foret) {
-            shp_files.retain(|file| file.contains("BDFORET_2-0"));
-            if shp_files.is_empty() {
-                return Err(DataError::Scraping("No BDFORET V2 file found".to_string()));
+                last_update = Instant::now();
             }
         }
 
-        Self::sort_by_date(&mut shp_files[..]);
+        file.flush().await?;
+        Ok(())
+    }
 
-        shp_files
-            .first()
-            .cloned()
-            .ok_or_else(|| DataError::Scraping("No valid file URL found".to_string()))
+    async fn with_retry<F, Fut, T>(mut f: F, retries: usize) -> DataResult<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = DataResult<T>>,
+    {
+        let mut attempts = 0;
+        loop {
+            match f().await {
+                Ok(result) => return Ok(result),
+                Err(e) if attempts < retries => {
+                    attempts += 1;
+                    println!("Attempt {} failed: {}", attempts, e);
+                    sleep(Duration::from_secs(5));
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     fn sort_by_date(files: &mut [String]) {
@@ -121,137 +108,188 @@ impl FetchService {
             .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
     }
 
-    pub async fn download_file(url: &str, path: &str) -> DataResult<()> {
-        let mut file = File::create(path).await?;
-        let mut stream = reqwest::get(url).await?.bytes_stream();
+    async fn scrap_page_for_link(
+        url: &str,
+        code: &str,
+        keyword: Option<&str>,
+    ) -> DataResult<String> {
+        let body = reqwest::get(url).await?.text().await?;
+        let document = Html::parse_document(&body);
+        let selector = Selector::parse("a")
+            .map_err(|e| DataError::Scraping(format!("Selector error: {}", e)))?;
 
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result?;
-            file.write_all(&chunk).await?;
+        let mut links: Vec<String> = document
+            .select(&selector)
+            .filter_map(|element| element.value().attr("href"))
+            .filter(|href| href.contains(code))
+            .map(|s| s.to_string())
+            .collect();
+
+        if let Some(kw) = keyword {
+            links.retain(|link| link.contains(kw));
         }
 
-        file.flush().await?;
+        if links.is_empty() {
+            return Err(DataError::Scraping("No file found".to_string()));
+        }
+
+        Self::sort_by_date(&mut links[..]);
+
+        let link = links
+            .first()
+            .ok_or_else(|| DataError::Scraping("No valid file URL found".to_string()))?;
+        Ok(link.to_string())
+    }
+
+    /// Fetch a data source from a given URL and save it to the specified output path.
+    /// If the file already exists in the cache directory, it will not be downloaded again.
+    ///
+    /// This function uses a retry mechanism to handle transient errors.
+    /// # Arguments
+    /// * `url` - The URL of the data source to fetch.
+    /// * `output_path` - The local file path where the data source should be saved.
+    /// # Errors
+    /// Returns a `DataError` if the download fails after retries.
+    async fn fetch_data_source(url: &str, output_path: &str) -> DataResult<()> {
+        if in_cache_dir(output_path) {
+            return Ok(());
+        }
+
+        let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3";
+        let client = reqwest::Client::builder()
+            .user_agent(user_agent)
+            .build()
+            .map_err(DataError::Http)?;
+
+        let progress = DownloadProgress::new();
+        Self::with_retry(
+            || Self::download_file(&client, url, output_path, &progress),
+            3,
+        )
+        .await
+    }
+
+    // ====================
+    // public methods
+    // ====================
+
+    /// Fetch download URLs for a given dataset code from configured data sources.
+    /// Returns a map of storage names to their corresponding download URLs.
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - The dataset code to search for (e.g., "D0", "R").
+    ///
+    /// # Errors
+    ///
+    /// Returns a `DataError` if no data sources are found or if scraping fails.
+    pub async fn get_download_urls(code: &str) -> DataResult<HashMap<String, String>> {
+        let data_sources = get_data_sources().get_sources().clone();
+        let mut dl_sources = HashMap::new();
+        for source in data_sources {
+            if source.storage_name == "ORTHOIMAGERY" {
+                continue;
+            }
+            let code = match source.storage_name.as_str() {
+                "RPG" => get_rpg_for_dep_code(code)
+                    .ok_or_else(|| DataError::Scraping(format!("No RPG code for {}", code)))?
+                    .to_string(),
+                _ => code.to_string(),
+            };
+
+            let link = Self::scrap_page_for_link(&source.url, &code, source.keyword.as_deref())
+                .await
+                .map_err(|e| {
+                    DataError::Scraping(format!(
+                        "Failed to fetch from {}: {}",
+                        source.storage_name, e
+                    ))
+                })?;
+            dl_sources.insert(source.storage_name.clone(), link);
+        }
+        if dl_sources.is_empty() {
+            return Err(DataError::Scraping("No data sources found".to_string()));
+        }
+
+        Ok(dl_sources)
+    }
+
+    /// Fetch all required data sources for the given dataset codes.
+    ///
+    /// # Arguments
+    /// * `codes` - A slice of dataset id in IGN database (e.g., ["D0", "R"]).
+    /// # Errors
+    /// Returns a `DataError` if fetching any of the data sources fails.
+    pub async fn fetch_data_sources(codes: &[&str]) -> DataResult<()> {
+        let progress = DownloadProgress::new();
+        let mut total_files = 0;
+        let mut all_downloads = Vec::new();
+
+        for &code in codes {
+            let dl_sources = Self::get_download_urls(code).await?;
+            total_files += dl_sources.len();
+            all_downloads.push((code, dl_sources));
+        }
+
+        let mut current_file = 0;
+        for (code, dl_sources) in all_downloads {
+            for (storage_name, url) in dl_sources {
+                current_file += 1;
+                progress.status(&format!("Téléchargement: {}_{}.7z", storage_name, code));
+                progress.file_progress(
+                    &format!("{}_{}", storage_name, code),
+                    current_file,
+                    total_files,
+                );
+                Self::fetch_data_source(
+                    &url,
+                    &format!("{}/{}_{}.7z", cache_dir().display(), storage_name, code),
+                )
+                .await?;
+            }
+        }
+
+        progress.status(&format!("Téléchargement terminé: {} fichiers", total_files));
+
         Ok(())
     }
 
-    pub async fn download_shp_file(url: &str, code: &str) -> DataResult<()> {
-        let db_type = DatabaseType::from_url(url)?;
-        let archive_name = db_type.archive_name();
-        let archive_path = format!(
-            "{}/{}_{}.7z",
-            cache_dir().to_string_lossy(),
-            archive_name,
-            code
-        );
-
-        if Path::new(&archive_path).exists() {
-            std::fs::remove_file(&archive_path)?;
-        }
-
-        Self::download_file(url, &archive_path).await
-    }
-
-    pub fn is_in_cache(name: &str) -> bool {
-        cache_dir().join(name).exists()
-    }
-
-    pub async fn fetch_orthophoto(output_path: &str, project_bb: &BoundingBox) -> DataResult<()> {
-        let wms_cache = cache_dir().join("wms_cache");
-        create_directory_if_not_exists(&wms_cache.to_string_lossy())
-            .map_err(|e| DataError::ExtractionFailed(e.to_string()))?;
-
+    /// Fetch orthophoto for a given bounding box and save it to the WMS cache directory.
+    ///
+    /// # Arguments
+    /// * `project_bb` - The bounding box for which to fetch the orthophoto.
+    /// # Errors
+    /// Returns a `DataError` if fetching the orthophoto fails.
+    pub async fn fetch_orthophoto(project_bb: &BoundingBox) -> DataResult<String> {
+        let wms_cache = wms_cache_dir();
         let res = resolution();
         let width = ((project_bb.xmax - project_bb.xmin) / res).ceil() as usize;
         let height = ((project_bb.ymax - project_bb.ymin) / res).ceil() as usize;
-
-        println!("Dimensions: width={}, height={} pixels", width, height);
 
         let cache_key = format!(
             "{:.6}_{:.6}_{:.6}_{:.6}_{}x{}",
             project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
         );
-        let cache_file = wms_cache.join(format!("satellite_{}.jpg", cache_key));
+        let output_path = wms_cache.join(format!("satellite_{}.jpg", cache_key));
 
-        if cache_file.exists() {
-            if let Ok(metadata) = fs::metadata(&cache_file)
-                && metadata.len() > 0
-            {
-                fs::copy(&cache_file, output_path)?;
-                println!("Retrieved from cache: {} bytes", metadata.len());
-                return Ok(());
-            }
-            let _ = fs::remove_file(&cache_file);
-        }
+        let sources = get_data_sources().clone();
+        let source = sources
+            .get_source_by_name("ORTHOIMAGERY")
+            .ok_or_else(|| DataError::Scraping("No ORTHOIMAGERY data source found".to_string()))?;
 
         let wms_url = format!(
-            "https://data.geopf.fr/wms-r/wms?\
-            SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&\
-            LAYERS=ORTHOIMAGERY.ORTHOPHOTOS&STYLES=&CRS=EPSG:2154&\
-            BBOX={},{},{},{}&WIDTH={}&HEIGHT={}&FORMAT=image/jpeg",
-            project_bb.xmin, project_bb.ymin, project_bb.xmax, project_bb.ymax, width, height
+            "{}BBOX={},{},{},{}&WIDTH={}&HEIGHT={}&FORMAT=image/jpeg",
+            source.url,
+            project_bb.xmin,
+            project_bb.ymin,
+            project_bb.xmax,
+            project_bb.ymax,
+            width,
+            height
         );
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .user_agent("Rust WMS Client")
-            .build()
-            .map_err(DataError::Http)?;
+        Self::fetch_data_source(&wms_url, output_path.to_str().unwrap()).await?;
 
-        let mut image_data = Vec::new();
-        let max_attempts = 3;
-
-        for attempt in 1..=max_attempts {
-            println!("Download attempt {}/{}", attempt, max_attempts);
-
-            match Self::download_wms_image(&client, &wms_url).await {
-                Ok(data) => {
-                    image_data = data;
-                    break;
-                }
-                Err(e) if attempt < max_attempts => {
-                    println!("Attempt {} failed: {}", attempt, e);
-                    sleep(Duration::from_secs(5));
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        let temp_cache = format!("{}.tmp", cache_file.to_string_lossy());
-        fs::write(&temp_cache, &image_data)?;
-        fs::rename(&temp_cache, &cache_file)?;
-        fs::copy(&cache_file, output_path)?;
-
-        println!("Orthophoto downloaded: {} bytes", image_data.len());
-        Ok(())
-    }
-
-    async fn download_wms_image(client: &reqwest::Client, url: &str) -> DataResult<Vec<u8>> {
-        let response = client.get(url).send().await.map_err(DataError::Http)?;
-
-        if !response.status().is_success() {
-            return Err(DataError::Http(response.error_for_status().unwrap_err()));
-        }
-
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|ct| ct.to_str().ok())
-            .unwrap_or("");
-
-        if !content_type.starts_with("image/") {
-            let error_text = response.text().await.map_err(DataError::Http)?;
-            return Err(DataError::Scraping(format!(
-                "Server error: {}",
-                &error_text[..error_text.len().min(200)]
-            )));
-        }
-
-        let image_data = response.bytes().await.map_err(DataError::Http)?.to_vec();
-
-        if image_data.len() < 10 || image_data[0] != 0xFF || image_data[1] != 0xD8 {
-            return Err(DataError::Scraping("Invalid JPEG data".to_string()));
-        }
-
-        Ok(image_data)
+        Ok(output_path.to_str().unwrap().to_string())
     }
 }

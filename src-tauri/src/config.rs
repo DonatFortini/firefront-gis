@@ -8,12 +8,88 @@ use tauri::{AppHandle, Manager};
 use thiserror::Error;
 
 const CACHE_DIR: &str = "cache";
+const WMS_CACHE_DIR: &str = "wms";
 const PROJECTS_DIR: &str = "projects";
 const TEMP_DIR: &str = "tmp";
 const RESOURCES_DIR: &str = "resources";
 const REGIONS_GRAPH_FILE: &str = "regions_graph.json";
 const DEFAULT_RESOLUTION: f64 = 10.0;
 const DEFAULT_SLICE_FACTOR: u32 = 500;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSource {
+    pub url: String,
+    pub storage_name: String,
+    pub prefix: Option<String>,
+    pub keyword: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DataSources {
+    sources: Vec<DataSource>,
+}
+
+impl DataSources {
+    pub fn new() -> Self {
+        Self {
+            sources: Vec::from([
+                DataSource {
+                    url: "https://geoservices.ign.fr/bdtopo".to_string(),
+                    storage_name: "BDTOPO".to_string(),
+                    prefix: Some("D0".to_string()),
+                    keyword: None,
+                },
+                DataSource {
+                    url: "https://geoservices.ign.fr/bdforet".to_string(),
+                    storage_name: "BDFORET".to_string(),
+                    prefix: Some("D0".to_string()),
+                    keyword: Some("BDFORET_2-0".to_string()),
+                },
+                DataSource {
+                    url: "https://geoservices.ign.fr/rpg".to_string(),
+                    storage_name: "RPG".to_string(),
+                    prefix: Some("R".to_string()),
+                    keyword: None,
+                },
+                DataSource {
+                    url: "https://geoservices.ign.fr/rgealti".to_string(),
+                    storage_name: "RGEALTI".to_string(),
+                    prefix: Some("D0".to_string()),
+                    keyword: Some("RGEALTI_2-0_5M".to_string()),
+                },
+                DataSource {
+                    url: "https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ORTHOIMAGERY.ORTHOPHOTOS&STYLES=&CRS=EPSG:2154&".to_string(),
+                    storage_name: "ORTHOIMAGERY".to_string(),
+                    prefix: None,
+                    keyword: None,
+                },
+            ]),
+        }
+    }
+
+    pub fn add_source(
+        &mut self,
+        url: String,
+        storage_name: String,
+        prefix: Option<String>,
+        keyword: Option<String>,
+    ) {
+        self.sources.push(DataSource {
+            url,
+            storage_name,
+            prefix,
+            keyword,
+        });
+    }
+
+    pub fn get_sources(&self) -> &Vec<DataSource> {
+        &self.sources
+    }
+
+    pub fn get_source_by_name(&self, name: &str) -> Option<&DataSource> {
+        self.sources.iter().find(|s| s.storage_name == name)
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -39,12 +115,14 @@ type Result<T> = std::result::Result<T, ConfigError>;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     pub cache_dir: PathBuf,
+    pub wms_cache_dir: PathBuf,
     pub projects_dir: PathBuf,
     pub temp_dir: PathBuf,
     pub resource_dir: PathBuf,
     pub resolution: f64,
     pub slice_factor: u32,
     pub output_location: PathBuf,
+    pub data_sources: DataSources,
     #[serde(skip)]
     pub handle: Option<AppHandle>,
     #[serde(skip)]
@@ -88,12 +166,14 @@ impl AppConfig {
 
         let mut config = Self {
             cache_dir: app_data_dir.join(CACHE_DIR),
+            wms_cache_dir: app_data_dir.join(CACHE_DIR).join(WMS_CACHE_DIR),
             projects_dir: app_data_dir.join(PROJECTS_DIR),
             temp_dir: app_data_dir.join(TEMP_DIR),
             resource_dir,
             resolution: DEFAULT_RESOLUTION,
             slice_factor: DEFAULT_SLICE_FACTOR,
             output_location: OUTPUT_DIR.lock().unwrap().clone(),
+            data_sources: DataSources::new(),
             handle,
             db_path,
             app_data_dir,
@@ -121,6 +201,7 @@ impl AppConfig {
 
         let path_fields = [
             ("cache_dir", &self.cache_dir),
+            ("wms_cache_dir", &self.wms_cache_dir),
             ("projects_dir", &self.projects_dir),
             ("temp_dir", &self.temp_dir),
             ("resource_dir", &self.resource_dir),
@@ -150,6 +231,9 @@ impl AppConfig {
     fn load_from_database(&mut self, conn: &Connection) -> Result<()> {
         if let Ok(value) = Self::get_config_value(conn, "cache_dir") {
             self.cache_dir = PathBuf::from(value);
+        }
+        if let Ok(value) = Self::get_config_value(conn, "wms_cache_dir") {
+            self.wms_cache_dir = PathBuf::from(value);
         }
         if let Ok(value) = Self::get_config_value(conn, "projects_dir") {
             self.projects_dir = PathBuf::from(value);
@@ -181,6 +265,7 @@ impl AppConfig {
 
         let path_fields = [
             ("cache_dir", &self.cache_dir),
+            ("wms_cache_dir", &self.wms_cache_dir),
             ("projects_dir", &self.projects_dir),
             ("temp_dir", &self.temp_dir),
             ("resource_dir", &self.resource_dir),

@@ -17,7 +17,12 @@ pub mod utils;
 fn initialize_app(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     AppConfig::init(app_handle.clone())?;
     Ok(AppConfig::with_write(|config| {
-        for dir_path in [&config.cache_dir, &config.temp_dir, &config.projects_dir] {
+        for dir_path in [
+            &config.cache_dir,
+            &config.wms_cache_dir,
+            &config.temp_dir,
+            &config.projects_dir,
+        ] {
             create_dir_all(dir_path)?;
         }
         Ok(())

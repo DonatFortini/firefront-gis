@@ -106,6 +106,20 @@ impl DownloadProgress {
     pub fn status(&self, message: &str) {
         Progress::substage(&self.stage, message);
     }
+
+    pub fn download_detail(
+        &self,
+        downloaded_mb: f64,
+        total_mb: f64,
+        speed_mbps: f64,
+        eta_secs: u64,
+    ) {
+        let message = format!(
+            " {:.2}/{:.2} MB | {:.2} MB/s | ETA: {}s",
+            downloaded_mb, total_mb, speed_mbps, eta_secs
+        );
+        Progress::substage(&self.stage, &message);
+    }
 }
 
 pub struct LayerProgress {

@@ -5,7 +5,9 @@ use tauri::command;
 use crate::config::get_config;
 use crate::services::{ProjectService, RegionService};
 use crate::types::BoundingBox;
-use crate::utils::{cache_dir, create_directory_if_not_exists, get_operating_system};
+use crate::utils::{
+    cache_dir, create_directory_if_not_exists, get_operating_system, wms_cache_dir,
+};
 
 #[command]
 pub fn get_projects() -> Result<HashMap<String, Vec<String>>, String> {
@@ -34,7 +36,7 @@ pub async fn delete_project(project_name: &str) -> Result<String, String> {
 }
 
 #[command(rename_all = "snake_case")]
-pub async fn create_project(name: String, project_bb: BoundingBox) -> Result<String, String> {
+pub async fn create_project(name: String, project_bb: BoundingBox) -> Result<(), String> {
     ProjectService::create_project(name, project_bb)
         .await
         .map_err(|e| e.to_string())
@@ -74,6 +76,8 @@ pub fn clear_cache() -> Result<String, String> {
     std::fs::remove_dir_all(&cache_path).map_err(|e| format!("Échec du vidage du cache: {}", e))?;
 
     create_directory_if_not_exists(&cache_path.to_string_lossy()).map_err(|e| e.to_string())?;
+    create_directory_if_not_exists(&wms_cache_dir().to_string_lossy())
+        .map_err(|e| e.to_string())?;
 
     Ok("Cache vidé avec succès".to_string())
 }

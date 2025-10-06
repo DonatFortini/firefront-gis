@@ -78,6 +78,10 @@ pub fn resource_dir() -> PathBuf {
     get_config(|config| config.resource_dir.clone())
 }
 
+pub fn wms_cache_dir() -> PathBuf {
+    get_config(|config| config.wms_cache_dir.clone())
+}
+
 pub fn output_location() -> PathBuf {
     get_config(|config| config.output_location.clone())
 }
@@ -108,6 +112,14 @@ pub fn in_temp_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
 
 pub fn in_resource_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
     resource_dir().join(path).exists()
+}
+
+pub fn in_wms_cache_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
+    wms_cache_dir().join(path).exists()
+}
+
+pub fn get_data_sources() -> crate::config::DataSources {
+    get_config(|config| config.data_sources.clone())
 }
 
 pub fn resolve_resource_dir(app_handle: &AppHandle, resource_path: &str) -> Result<PathBuf> {
@@ -157,6 +169,10 @@ impl PathBuilder {
 
     pub fn cache_file(&self, name: &str) -> String {
         format!("{}/{}", self.cache_dir, name)
+    }
+
+    pub fn project_folder(&self, project_name: &str) -> String {
+        format!("{}/{}", projects_dir().to_string_lossy(), project_name)
     }
 
     pub fn project_resource(&self, project_folder: &str, name: &str) -> String {

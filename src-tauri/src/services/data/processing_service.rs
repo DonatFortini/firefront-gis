@@ -138,9 +138,20 @@ impl ProcessingService {
             .await
             .map_err(|e| GisError::Dataset(e.to_string()))?;
 
-        let shp_file = format!("{}/{}/{}.shp", path_builder.temp_dir, file, file);
-        let temp_gpkg = path_builder.temp_file(file, "gpkg");
-        VectorService::convert_to_gpkg(&shp_file, &temp_gpkg).await?;
+        let exts = ["gpkg", "shp", "geojson"];
+        let source_file = exts
+            .iter()
+            .map(|ext| format!("{}/{}/{}.{}", path_builder.temp_dir, file, file, ext))
+            .find(|f| Path::new(f).exists())
+            .ok_or_else(|| GisError::Dataset(format!("No supported file found for {}", file)))?;
+
+        let temp_gpkg = if source_file.ends_with(".gpkg") {
+            source_file.clone()
+        } else {
+            let temp_gpkg = path_builder.temp_file(file, "gpkg");
+            VectorService::convert_to_gpkg(&source_file, &temp_gpkg).await?;
+            temp_gpkg
+        };
 
         let output_gpkg = path_builder.temp_file(&format!("{}_{}", code, file), "gpkg");
         VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await?;
