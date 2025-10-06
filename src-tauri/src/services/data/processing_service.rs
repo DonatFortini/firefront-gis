@@ -74,15 +74,15 @@ impl ProcessingService {
         layer_progress.next_layer("étendue régionale");
         let regional_gpkg = Self::prepare_regional_layer(&path_builder, code, project_bb).await?;
 
+        layer_progress.next_layer("extraction des données");
+        let extracted_files = Self::extract_all_required_files(&path_builder, code).await?;
+
         let mut vegetation_gpkg = String::new();
         let mut rpg_gpkg = String::new();
         let mut topo_gpkgs: HashMap<String, Vec<String>> = HashMap::new();
 
         for config in LayerConfig::get_configs() {
-            layer_progress.next_layer(&format!("couches {}", config.layer_type));
-
-            let archive_path =
-                path_builder.cache_file(&format!("{}_{}.7z", config.archive_name, code));
+            layer_progress.next_layer(&format!("traitement {}", config.layer_type));
 
             for (file_idx, file) in config.files.iter().enumerate() {
                 layer_progress.layer_operation(
@@ -92,23 +92,74 @@ impl ProcessingService {
                     config.files.len(),
                 );
 
-                let output_gpkg =
-                    Self::process_layer_file(&path_builder, &archive_path, file, code, project_bb)
-                        .await?;
+                if let Some(extracted_path) =
+                    extracted_files.get(&format!("{}_{}", config.archive_name, file))
+                {
+                    let output_gpkg = Self::process_extracted_file(
+                        &path_builder,
+                        extracted_path,
+                        file,
+                        code,
+                        project_bb,
+                    )
+                    .await?;
 
-                match config.order {
-                    1 => vegetation_gpkg = output_gpkg,
-                    2 => rpg_gpkg = output_gpkg,
-                    3 => topo_gpkgs
-                        .entry(file.to_string())
-                        .or_default()
-                        .push(output_gpkg),
-                    _ => {}
+                    match config.order {
+                        1 => vegetation_gpkg = output_gpkg,
+                        2 => rpg_gpkg = output_gpkg,
+                        3 => topo_gpkgs
+                            .entry(file.to_string())
+                            .or_default()
+                            .push(output_gpkg),
+                        _ => {}
+                    }
                 }
             }
         }
 
         Ok((regional_gpkg, vegetation_gpkg, rpg_gpkg, topo_gpkgs))
+    }
+
+    async fn extract_all_required_files(
+        path_builder: &PathBuilder,
+        code: &str,
+    ) -> GisResult<HashMap<String, String>> {
+        let mut all_extracted_files = HashMap::new();
+
+        for config in LayerConfig::get_configs() {
+            let archive_path =
+                path_builder.cache_file(&format!("{}_{}.7z", config.archive_name, code));
+
+            if !Path::new(&archive_path).exists() {
+                println!("Archive non trouvée: {}", archive_path);
+                continue;
+            }
+
+            let file_names: Vec<&str> = config.files.to_vec();
+
+            match ArchiveService::extract_multiple_files(
+                &archive_path,
+                &file_names,
+                &path_builder.temp_dir,
+            )
+            .await
+            {
+                Ok(extracted) => {
+                    for (file_name, file_path) in extracted {
+                        let key = format!("{}_{}", config.archive_name, file_name);
+                        all_extracted_files.insert(key, file_path);
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "Erreur lors de l'extraction de {}: {}",
+                        config.archive_name, e
+                    );
+                }
+            }
+        }
+
+        Ok(all_extracted_files)
     }
 
     async fn prepare_regional_layer(
@@ -127,33 +178,31 @@ impl ProcessingService {
         Ok(output_gpkg)
     }
 
-    async fn process_layer_file(
+    async fn process_extracted_file(
         path_builder: &PathBuilder,
-        archive_path: &str,
-        file: &str,
+        extracted_dir: &str,
+        file_name: &str,
         code: &str,
         project_bb: &BoundingBox,
     ) -> GisResult<String> {
-        ArchiveService::extract_files_by_name(archive_path, file, &path_builder.temp_dir)
-            .await
-            .map_err(|e| GisError::Dataset(e.to_string()))?;
-
         let exts = ["gpkg", "shp", "geojson"];
         let source_file = exts
             .iter()
-            .map(|ext| format!("{}/{}/{}.{}", path_builder.temp_dir, file, file, ext))
+            .map(|ext| format!("{}/{}.{}", extracted_dir, file_name, ext))
             .find(|f| Path::new(f).exists())
-            .ok_or_else(|| GisError::Dataset(format!("No supported file found for {}", file)))?;
+            .ok_or_else(|| {
+                GisError::Dataset(format!("No supported file found for {}", file_name))
+            })?;
 
         let temp_gpkg = if source_file.ends_with(".gpkg") {
             source_file.clone()
         } else {
-            let temp_gpkg = path_builder.temp_file(file, "gpkg");
+            let temp_gpkg = path_builder.temp_file(file_name, "gpkg");
             VectorService::convert_to_gpkg(&source_file, &temp_gpkg).await?;
             temp_gpkg
         };
 
-        let output_gpkg = path_builder.temp_file(&format!("{}_{}", code, file), "gpkg");
+        let output_gpkg = path_builder.temp_file(&format!("{}_{}", code, file_name), "gpkg");
         VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await?;
 
         Ok(output_gpkg)

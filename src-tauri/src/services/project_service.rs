@@ -330,8 +330,6 @@ impl ProjectService {
             for (layer, paths) in t {
                 topo_gpkgs.entry(layer).or_default().extend(paths);
             }
-
-            clean_tmp(Some(".gpkg")).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
         }
 
         Self::merge_layers(
@@ -345,7 +343,7 @@ impl ProjectService {
         )
         .await?;
 
-        clean_tmp(Some(".gpkg")).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+        clean_tmp(None).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
         Ok(())
     }
