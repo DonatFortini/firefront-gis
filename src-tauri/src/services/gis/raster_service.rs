@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::error::{GisError, GisResult};
 use crate::services::ProjectService;
 use crate::types::{BoundingBox, Driver, GTiff};
-use crate::utils::{create_directory_if_not_exists, projects_dir, resolution};
+use crate::utils::{create_directory_if_not_exists, execute_sidecar, projects_dir, resolution};
 
 pub struct RasterService;
 
@@ -75,6 +75,7 @@ impl RasterService {
 
         let veget_path = project_dir.join(format!("{}_VEGET.jpeg", project_name));
         let ortho_path = project_dir.join(format!("{}_ORTHO.jpeg", project_name));
+        let elevation_path = project_dir.join("resources/elevation.tif");
 
         let veget_image = Self::load_image(&veget_path)?;
         let ortho_image = Self::load_image(&ortho_path)?;
@@ -94,14 +95,11 @@ impl RasterService {
             base_y,
         )?;
 
-        Ok("Slicing completed".to_string())
-    }
+        if elevation_path.exists() {
+            Self::slice_elevation(&elevation_path, &slice_dir, &project_bb, slice_factor).await?;
+        }
 
-    fn load_image(path: &Path) -> GisResult<DynamicImage> {
-        image::ImageReader::open(path)
-            .map_err(|e| GisError::ImageProcessing(format!("Failed to open: {}", e)))?
-            .decode()
-            .map_err(|e| GisError::ImageProcessing(format!("Failed to decode: {}", e)))
+        Ok("Slicing completed".to_string())
     }
 
     fn process_slices(
@@ -128,20 +126,79 @@ impl RasterService {
 
                 let veget_file =
                     slice_dir.join(format!("{}_{}_{}_veget.jpg", coord_x, coord_y, factor));
-                let ortho_file = slice_dir.join(format!(
-                    "{}_{}_{}_{}.jpg",
-                    coord_x, coord_y, factor, "ortho"
-                ));
+                let ortho_file =
+                    slice_dir.join(format!("{}_{}_{}_ortho.jpg", coord_x, coord_y, factor));
 
-                cropped_veget
-                    .save(&veget_file)
-                    .map_err(|e| GisError::SliceFailed(e.to_string()))?;
                 cropped_ortho
                     .save(&ortho_file)
+                    .map_err(|e| GisError::SliceFailed(e.to_string()))?;
+                cropped_veget
+                    .save(&veget_file)
                     .map_err(|e| GisError::SliceFailed(e.to_string()))?;
             }
         }
 
         Ok(())
+    }
+
+    async fn slice_elevation(
+        elevation_path: &Path,
+        slice_dir: &Path,
+        project_bb: &BoundingBox,
+        factor: u32,
+    ) -> GisResult<()> {
+        let resolution = resolution();
+        let tile_size_meters = (factor as f64) * resolution;
+
+        let width = project_bb.width();
+        let height = project_bb.height();
+
+        let tiles_x = (width / tile_size_meters).ceil() as usize;
+        let tiles_y = (height / tile_size_meters).ceil() as usize;
+
+        for tile_y in 0..tiles_y {
+            for tile_x in 0..tiles_x {
+                let xmin = project_bb.xmin + (tile_x as f64 * tile_size_meters);
+                let ymax = project_bb.ymax - (tile_y as f64 * tile_size_meters);
+                let xmax = (xmin + tile_size_meters).min(project_bb.xmax);
+                let ymin = (ymax - tile_size_meters).max(project_bb.ymin);
+
+                let coord_x = (xmin / 1000.0) as u32;
+                let coord_y = (ymin / 1000.0) as u32;
+
+                let output_file = slice_dir.join(format!("{}_{}_alti.grd", coord_x, coord_y));
+
+                execute_sidecar(
+                    "gdal_translate",
+                    &[
+                        "-of",
+                        "AAIGrid",
+                        "-projwin",
+                        &xmin.to_string(),
+                        &ymax.to_string(),
+                        &xmax.to_string(),
+                        &ymin.to_string(),
+                        "-co",
+                        "FORCE_CELLSIZE=YES",
+                        "--config",
+                        "GDAL_PAM_ENABLED",
+                        "NO",
+                        elevation_path.to_str().unwrap(),
+                        output_file.to_str().unwrap(),
+                    ],
+                )
+                .await
+                .map_err(|e| GisError::SliceFailed(format!("Failed to slice elevation: {}", e)))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn load_image(path: &Path) -> GisResult<DynamicImage> {
+        image::ImageReader::open(path)
+            .map_err(|e| GisError::ImageProcessing(format!("Failed to open: {}", e)))?
+            .decode()
+            .map_err(|e| GisError::ImageProcessing(format!("Failed to decode: {}", e)))
     }
 }

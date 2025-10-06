@@ -91,4 +91,23 @@ impl ArchiveService {
 
         Ok(())
     }
+
+    pub async fn extract_all(archive_path: &str, output_dir: &str) -> DataResult<()> {
+        let output_path = Path::new(output_dir);
+        std::fs::create_dir_all(output_path)?;
+
+        execute_sidecar(
+            "_7z",
+            &[
+                "x",
+                archive_path,
+                &format!("-o{}", output_path.display()),
+                "-y",
+            ],
+        )
+        .await
+        .map_err(|e| DataError::ExtractionFailed(e.to_string()))?;
+
+        Ok(())
+    }
 }
