@@ -180,6 +180,8 @@ impl RasterService {
                         &ymin.to_string(),
                         "-co",
                         "FORCE_CELLSIZE=YES",
+                        "-co",
+                        "DECIMAL_PRECISION=2",
                         "--config",
                         "GDAL_PAM_ENABLED",
                         "NO",
@@ -189,12 +191,45 @@ impl RasterService {
                 )
                 .await
                 .map_err(|e| GisError::SliceFailed(format!("Failed to slice elevation: {}", e)))?;
+
+                Self::fix_asc_header(&output_file)?;
             }
         }
 
         Ok(())
     }
 
+    fn fix_asc_header(file_path: &Path) -> GisResult<()> {
+        let content = std::fs::read_to_string(file_path)?;
+        let lines: Vec<&str> = content.lines().collect();
+
+        let mut fixed_lines = Vec::new();
+
+        for line in lines {
+            let trimmed = line.trim();
+
+            if trimmed.starts_with("ncols")
+                || trimmed.starts_with("nrows")
+                || trimmed.starts_with("xllcorner")
+                || trimmed.starts_with("yllcorner")
+                || trimmed.starts_with("cellsize")
+                || trimmed.starts_with("NODATA_value")
+            {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() == 2
+                    && let Ok(value) = parts[1].parse::<f64>()
+                {
+                    fixed_lines.push(format!("{} {}", parts[0], value as i64));
+                    continue;
+                }
+            }
+
+            fixed_lines.push(line.to_string());
+        }
+
+        std::fs::write(file_path, fixed_lines.join("\n"))?;
+        Ok(())
+    }
     fn load_image(path: &Path) -> GisResult<DynamicImage> {
         image::ImageReader::open(path)
             .map_err(|e| GisError::ImageProcessing(format!("Failed to open: {}", e)))?

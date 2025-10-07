@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 use crate::config::get_config;
@@ -98,24 +98,8 @@ pub fn get_handle() -> Option<AppHandle> {
     get_config(|config| config.handle.clone())
 }
 
-pub fn in_cache_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
-    cache_dir().join(path).exists()
-}
-
-pub fn in_projects_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
-    projects_dir().join(path).exists()
-}
-
-pub fn in_temp_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
-    temp_dir().join(path).exists()
-}
-
-pub fn in_resource_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
-    resource_dir().join(path).exists()
-}
-
-pub fn in_wms_cache_dir<P: AsRef<std::path::Path>>(path: P) -> bool {
-    wms_cache_dir().join(path).exists()
+pub fn path_exists_in<P: AsRef<Path>>(base: PathBuf, path: P) -> bool {
+    base.join(path).exists()
 }
 
 pub fn get_data_sources() -> crate::config::DataSources {

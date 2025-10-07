@@ -12,8 +12,8 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use crate::error::{DataError, DataResult};
 use crate::types::BoundingBox;
 use crate::utils::{
-    DownloadProgress, cache_dir, get_data_sources, get_rpg_for_dep_code, in_cache_dir, resolution,
-    wms_cache_dir,
+    DownloadProgress, cache_dir, get_data_sources, get_rpg_for_dep_code, path_exists_in,
+    resolution, wms_cache_dir,
 };
 
 pub struct FetchService;
@@ -151,7 +151,7 @@ impl FetchService {
     /// # Errors
     /// Returns a `DataError` if the download fails after retries.
     async fn fetch_data_source(url: &str, output_path: &str) -> DataResult<()> {
-        if in_cache_dir(output_path) {
+        if path_exists_in(cache_dir(), output_path) {
             return Ok(());
         }
 

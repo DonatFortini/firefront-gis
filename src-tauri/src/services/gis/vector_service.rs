@@ -111,25 +111,4 @@ impl VectorService {
 
         Ok(())
     }
-
-    pub async fn get_geojson_bbox(file_path: &str) -> GisResult<BoundingBox> {
-        let (output, _) = execute_sidecar("ogrinfo", &["-so", "-al", file_path])
-            .await
-            .map_err(|e| GisError::GdalOperation {
-                operation: "ogrinfo".to_string(),
-                message: e.to_string(),
-            })?;
-
-        let pattern = r"Extent:\s*\(([\d.-]+),\s*([\d.-]+)\)\s*-\s*\(([\d.-]+),\s*([\d.-]+)\)";
-        let caps = regex::Regex::new(pattern)?
-            .captures(&output)
-            .ok_or(GisError::ExtentNotFound)?;
-
-        Ok(BoundingBox {
-            xmin: caps[1].parse()?,
-            ymin: caps[2].parse()?,
-            xmax: caps[3].parse()?,
-            ymax: caps[4].parse()?,
-        })
-    }
 }
