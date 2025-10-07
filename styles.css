@@ -183,11 +183,9 @@ h3 {
     left: 0;
     width: 3px;
     height: 100%;
-    background: linear-gradient(
-        to bottom,
-        var(--accent-primary) 0%,
-        transparent 100%
-    );
+    background: linear-gradient(to bottom,
+            var(--accent-primary) 0%,
+            transparent 100%);
 }
 
 .sidebar-header {
@@ -281,6 +279,41 @@ h3 {
     min-height: calc(100vh - 58px);
     overflow: hidden;
     padding: 12px;
+}
+
+.home-header {
+    position: fixed;
+    top: 0;
+    left: 260px;
+    right: 0;
+    padding: 16px 20px;
+    background-color: var(--background-primary);
+    border-bottom: 1px solid var(--border-color);
+    z-index: 100;
+    margin: 0;
+    height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.home-header h2 {
+    position: static;
+    padding: 0;
+    margin: 0;
+    border: none;
+    height: auto;
+}
+
+.app-version {
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+    font-weight: 500;
+    padding: 6px 12px;
+    background-color: var(--surface-primary);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--border-color);
+    font-family: var(--font-mono);
 }
 
 .full-content .project-view {
@@ -475,7 +508,7 @@ label {
     justify-items: center;
 }
 
-.coord-row > div {
+.coord-row>div {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -820,6 +853,10 @@ select:focus-visible {
 @media (max-width: 768px) {
     .sidebar {
         width: 70px;
+    }
+
+    .home-header {
+        left: 70px;
     }
 
     .sidebar-header {

@@ -64,7 +64,8 @@ pub fn run() {
             get_settings,
             save_settings,
             clear_cache,
-            load_regions_graph
+            load_regions_graph,
+            get_app_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
