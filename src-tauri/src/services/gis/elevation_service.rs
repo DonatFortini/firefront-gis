@@ -1,9 +1,8 @@
-use std::path::{Path, PathBuf};
-
 use crate::error::{GisError, GisResult};
 use crate::services::ArchiveService;
 use crate::types::BoundingBox;
 use crate::utils::{cache_dir, execute_sidecar, temp_dir};
+use std::path::{Path, PathBuf};
 
 pub struct ElevationService;
 
@@ -12,6 +11,7 @@ impl ElevationService {
         project_bb: &BoundingBox,
         code: &str,
         output_path: &str,
+        project_folder: &str,
     ) -> GisResult<()> {
         let archive_path = cache_dir().join(format!("RGEALTI_{}.7z", code));
         if !archive_path.exists() {
@@ -64,10 +64,64 @@ impl ElevationService {
         Self::create_vrt(&intersecting_tiles, &vrt_path).await?;
         Self::warp_to_project(&vrt_path, output_path, project_bb).await?;
 
+        let (min_elev, max_elev) = Self::get_elevation_range(output_path).await?;
+        Self::create_color_ramp(project_folder, min_elev, max_elev)?;
+
         std::fs::remove_file(&vrt_path).ok();
         std::fs::remove_dir_all(&extract_dir).ok();
 
         println!("Elevation processing complete for code {}", code);
+
+        Ok(())
+    }
+
+    pub async fn get_elevation_range(raster_path: &str) -> GisResult<(f64, f64)> {
+        let (output, _) = execute_sidecar("gdalinfo", &["-stats", "-json", raster_path])
+            .await
+            .map_err(|e| GisError::GdalOperation {
+                operation: "gdalinfo".to_string(),
+                message: e.to_string(),
+            })?;
+
+        let info: serde_json::Value = serde_json::from_str(&output).map_err(GisError::JsonParse)?;
+
+        let bands = info["bands"]
+            .as_array()
+            .ok_or_else(|| GisError::Dataset("No bands found".to_string()))?;
+
+        if let Some(band) = bands.first() {
+            let min = band["minimum"]
+                .as_f64()
+                .ok_or_else(|| GisError::Dataset("No minimum value found".to_string()))?;
+            let max = band["maximum"]
+                .as_f64()
+                .ok_or_else(|| GisError::Dataset("No maximum value found".to_string()))?;
+
+            println!("Elevation range: {:.2}m to {:.2}m", min, max);
+            Ok((min, max))
+        } else {
+            Err(GisError::Dataset("No band information found".to_string()))
+        }
+    }
+
+    pub fn create_color_ramp(project_folder: &str, min_elev: f64, max_elev: f64) -> GisResult<()> {
+        let resources_dir = format!("{}/resources", project_folder);
+        std::fs::create_dir_all(&resources_dir)?;
+
+        let color_ramp_path = format!("{}/color_ramp.txt", resources_dir);
+
+        let range = max_elev - min_elev;
+        let step1 = min_elev + (range * 0.25);
+        let step2 = min_elev + (range * 0.50);
+        let step3 = min_elev + (range * 0.75);
+
+        let color_ramp = format!(
+            "nv 255 255 255\n{:.2} 220 230 255\n{:.2} 150 180 230\n{:.2} 80 120 200\n{:.2} 40 70 150\n{:.2} 0 20 100\n",
+            min_elev, step1, step2, step3, max_elev
+        );
+
+        std::fs::write(&color_ramp_path, color_ramp)?;
+        println!("Color ramp created at: {}", color_ramp_path);
 
         Ok(())
     }

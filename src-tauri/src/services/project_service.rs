@@ -16,6 +16,8 @@ use crate::utils::{
 
 pub struct ProjectService;
 //TODO: ajout metadata projet
+//TODO : perfomance ( archive, fusion, copie fichier ... )
+// TODO : update frontend (progress bar, documentation, settings, ui si j'ai le temps ... )
 impl ProjectService {
     pub fn list_projects() -> ProjectResult<HashMap<String, Vec<String>>> {
         let projects_path = projects_dir();
@@ -196,9 +198,14 @@ impl ProjectService {
 
             let temp_elevation = format!("{}/elevation_{}.tif", temp_dir().display(), code);
 
-            ElevationService::process_elevation_tiles(project_bb, code, &temp_elevation)
-                .await
-                .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+            ElevationService::process_elevation_tiles(
+                project_bb,
+                code,
+                &temp_elevation,
+                project_folder,
+            )
+            .await
+            .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
             elevation_tiles.push(temp_elevation);
         }
@@ -210,9 +217,27 @@ impl ProjectService {
             for tile in &elevation_tiles {
                 tokio::fs::remove_file(tile).await.ok();
             }
+
+            Self::update_color_ramp_after_merge(&elevation_output, project_folder).await?;
         } else if !elevation_tiles.is_empty() {
             tokio::fs::rename(&elevation_tiles[0], &elevation_output).await?;
         }
+
+        Ok(())
+    }
+
+    async fn update_color_ramp_after_merge(
+        elevation_path: &str,
+        project_folder: &str,
+    ) -> ProjectResult<()> {
+        use crate::services::ElevationService;
+
+        let (min_elev, max_elev) = ElevationService::get_elevation_range(elevation_path)
+            .await
+            .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+
+        ElevationService::create_color_ramp(project_folder, min_elev, max_elev)
+            .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
         Ok(())
     }

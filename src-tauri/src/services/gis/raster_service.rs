@@ -66,6 +66,90 @@ impl RasterService {
         Ok(())
     }
 
+    async fn slice_elevation(
+        elevation_path: &Path,
+        slice_dir: &Path,
+        project_bb: &BoundingBox,
+        project_folder: &str,
+        factor: u32,
+    ) -> GisResult<()> {
+        let resolution = resolution();
+        let tile_size_meters = (factor as f64) * resolution;
+
+        let width = project_bb.width();
+        let height = project_bb.height();
+
+        let tiles_x = (width / tile_size_meters).ceil() as usize;
+        let tiles_y = (height / tile_size_meters).ceil() as usize;
+
+        let color_ramp_path = format!("{}/resources/color_ramp.txt", project_folder);
+
+        for tile_y in 0..tiles_y {
+            for tile_x in 0..tiles_x {
+                let xmin = project_bb.xmin + (tile_x as f64 * tile_size_meters);
+                let ymax = project_bb.ymax - (tile_y as f64 * tile_size_meters);
+                let xmax = (xmin + tile_size_meters).min(project_bb.xmax);
+                let ymin = (ymax - tile_size_meters).max(project_bb.ymin);
+
+                let coord_x = (xmin / 1000.0) as u32;
+                let coord_y = (ymin / 1000.0) as u32;
+
+                let output_grd = slice_dir.join(format!("{}_{}_alti.grd", coord_x, coord_y));
+                let output_bmp = slice_dir.join(format!("{}_{}_{}.bmp", coord_x, coord_y, factor));
+
+                execute_sidecar(
+                    "gdal_translate",
+                    &[
+                        "-of",
+                        "AAIGrid",
+                        "-projwin",
+                        &xmin.to_string(),
+                        &ymax.to_string(),
+                        &xmax.to_string(),
+                        &ymin.to_string(),
+                        "-co",
+                        "FORCE_CELLSIZE=YES",
+                        "-co",
+                        "DECIMAL_PRECISION=2",
+                        "--config",
+                        "GDAL_PAM_ENABLED",
+                        "NO",
+                        elevation_path.to_str().unwrap(),
+                        output_grd.to_str().unwrap(),
+                    ],
+                )
+                .await
+                .map_err(|e| GisError::SliceFailed(format!("Failed to slice elevation: {}", e)))?;
+
+                Self::fix_asc_header(&output_grd)?;
+
+                execute_sidecar(
+                    "gdaldem",
+                    &[
+                        "color-relief",
+                        output_grd.to_str().unwrap(),
+                        &color_ramp_path,
+                        output_bmp.to_str().unwrap(),
+                        "-of",
+                        "BMP",
+                        "--config",
+                        "GDAL_PAM_ENABLED",
+                        "NO",
+                    ],
+                )
+                .await
+                .map_err(|e| GisError::SliceFailed(format!("Failed to create BMP: {}", e)))?;
+
+                let aux_xml = output_bmp.with_extension("bmp.aux.xml");
+                if aux_xml.exists() {
+                    std::fs::remove_file(aux_xml).ok();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn slice_project(project_name: &str, slice_factor: u32) -> GisResult<String> {
         let project_dir = projects_dir().join(project_name);
         let slice_dir = project_dir.join("slices");
@@ -96,7 +180,14 @@ impl RasterService {
         )?;
 
         if elevation_path.exists() {
-            Self::slice_elevation(&elevation_path, &slice_dir, &project_bb, slice_factor).await?;
+            Self::slice_elevation(
+                &elevation_path,
+                &slice_dir,
+                &project_bb,
+                &project_dir.to_string_lossy(),
+                slice_factor,
+            )
+            .await?;
         }
 
         Ok("Slicing completed".to_string())
@@ -135,64 +226,6 @@ impl RasterService {
                 cropped_veget
                     .save(&veget_file)
                     .map_err(|e| GisError::SliceFailed(e.to_string()))?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn slice_elevation(
-        elevation_path: &Path,
-        slice_dir: &Path,
-        project_bb: &BoundingBox,
-        factor: u32,
-    ) -> GisResult<()> {
-        let resolution = resolution();
-        let tile_size_meters = (factor as f64) * resolution;
-
-        let width = project_bb.width();
-        let height = project_bb.height();
-
-        let tiles_x = (width / tile_size_meters).ceil() as usize;
-        let tiles_y = (height / tile_size_meters).ceil() as usize;
-
-        for tile_y in 0..tiles_y {
-            for tile_x in 0..tiles_x {
-                let xmin = project_bb.xmin + (tile_x as f64 * tile_size_meters);
-                let ymax = project_bb.ymax - (tile_y as f64 * tile_size_meters);
-                let xmax = (xmin + tile_size_meters).min(project_bb.xmax);
-                let ymin = (ymax - tile_size_meters).max(project_bb.ymin);
-
-                let coord_x = (xmin / 1000.0) as u32;
-                let coord_y = (ymin / 1000.0) as u32;
-
-                let output_file = slice_dir.join(format!("{}_{}_alti.grd", coord_x, coord_y));
-
-                execute_sidecar(
-                    "gdal_translate",
-                    &[
-                        "-of",
-                        "AAIGrid",
-                        "-projwin",
-                        &xmin.to_string(),
-                        &ymax.to_string(),
-                        &xmax.to_string(),
-                        &ymin.to_string(),
-                        "-co",
-                        "FORCE_CELLSIZE=YES",
-                        "-co",
-                        "DECIMAL_PRECISION=2",
-                        "--config",
-                        "GDAL_PAM_ENABLED",
-                        "NO",
-                        elevation_path.to_str().unwrap(),
-                        output_file.to_str().unwrap(),
-                    ],
-                )
-                .await
-                .map_err(|e| GisError::SliceFailed(format!("Failed to slice elevation: {}", e)))?;
-
-                Self::fix_asc_header(&output_file)?;
             }
         }
 

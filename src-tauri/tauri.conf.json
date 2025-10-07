@@ -53,7 +53,8 @@
       "binaries/gdal/gdal_translate",
       "binaries/gdal/gdalwarp",
       "binaries/gdal/gdal_create",
-      "binaries/gdal/gdalbuildvrt"
+      "binaries/gdal/gdalbuildvrt",
+      "binaries/gdal/gdaldem"
     ]
   }
 }

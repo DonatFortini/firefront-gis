@@ -1,3 +1,4 @@
+use crate::error::ConfigError;
 use crate::utils::{OUTPUT_DIR, resolve_resource_dir};
 use rusqlite::{Connection, Result as SqliteResult, params};
 use serde::{Deserialize, Serialize};
@@ -5,7 +6,6 @@ use std::fs::create_dir_all;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 use tauri::{AppHandle, Manager};
-use thiserror::Error;
 
 const CACHE_DIR: &str = "cache";
 const WMS_CACHE_DIR: &str = "wms";
@@ -89,25 +89,6 @@ impl DataSources {
     pub fn get_source_by_name(&self, name: &str) -> Option<&DataSource> {
         self.sources.iter().find(|s| s.storage_name == name)
     }
-}
-
-#[derive(Error, Debug)]
-pub enum ConfigError {
-    #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
-    #[error("Configuration directory not found")]
-    ConfigDirNotFound,
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Failed to resolve resource path '{path}': {source}")]
-    ResourcePathResolution {
-        path: String,
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-    #[error("GIS operation error: {0}")]
-    GisOperation(String),
 }
 
 type Result<T> = std::result::Result<T, ConfigError>;
