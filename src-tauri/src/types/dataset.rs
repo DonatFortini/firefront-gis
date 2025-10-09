@@ -1,10 +1,100 @@
-use crate::{
-    types::{
-        BoundingBox, DriverFormat, ENVI, GPKG, GTiff, GeoJSON, JPEG, PNG, RasterBand, Shapefile,
-    },
-    utils::executor,
-};
+use crate::{types::BoundingBox, utils::execute_sidecar};
 use serde_json::Value;
+use std::error::Error;
+
+#[derive(Debug, Clone)]
+pub struct RasterBand {
+    pub index: usize,
+    pub data_type: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub common_name: Option<String>,
+}
+
+impl RasterBand {
+    pub fn new(index: usize, data_type: String) -> Self {
+        Self {
+            index,
+            data_type,
+            name: None,
+            description: None,
+            common_name: None,
+        }
+    }
+
+    pub fn with_metadata(
+        mut self,
+        name: Option<String>,
+        description: Option<String>,
+        common_name: Option<String>,
+    ) -> Self {
+        self.name = name;
+        self.description = description;
+        self.common_name = common_name;
+        self
+    }
+}
+
+pub trait DriverFormat {
+    const NAME: &'static str;
+    const EXTENSION: &'static str;
+}
+
+macro_rules! define_driver {
+    ($name:ident, $driver:expr, $ext:expr) => {
+        pub struct $name;
+        impl DriverFormat for $name {
+            const NAME: &'static str = $driver;
+            const EXTENSION: &'static str = $ext;
+        }
+    };
+}
+
+define_driver!(GTiff, "GTiff", "tif");
+define_driver!(JPEG, "JPEG", "jpeg");
+define_driver!(PNG, "PNG", "png");
+define_driver!(GPKG, "GPKG", "gpkg");
+define_driver!(ENVI, "ENVI", "dat");
+define_driver!(Shapefile, "ESRI Shapefile", "shp");
+define_driver!(GeoJSON, "GeoJSON", "geojson");
+
+#[derive(Debug, Default)]
+/// Représente un pilote GDAL pour la création de nouveaux ensembles de données.
+/// # Type Paramètre
+/// - `T`: Le format du pilote, qui doit implémenter le trait `DriverFormat`.
+/// # Méthodes
+/// - `new()`: Crée une nouvelle instance du pilote.
+/// - `create(args: &[&str])`: Crée un nouvel ensemble de données en utilisant le pilote GDAL spécifié.
+pub struct Driver<T: DriverFormat> {
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: DriverFormat> Driver<T> {
+    pub fn new() -> Self {
+        Self {
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Crée un nouvel ensemble de données en utilisant le pilote GDAL spécifié.
+    /// # Arguments
+    /// - `args`: Un tableau de chaînes représentant les arguments supplémentaires pour la création
+    ///   de l'ensemble de données (par exemple, le chemin du fichier, la taille, etc.).
+    /// # Retourne
+    /// - `Result<(), Box<dyn Error>>`: Un résultat indiquant si la création a réussi ou échoué.
+    /// # Exemple
+    /// ```rust
+    /// use your_crate::types::dataset::{Driver, GTiff};
+    /// let driver = Driver::<GTiff>::new();
+    /// driver.create(&["output.tif", "512", "512"]).await.unwrap();
+    /// ```
+    pub async fn create(&self, args: &[&str]) -> Result<(), Box<dyn Error>> {
+        let mut pref_args = vec!["-of", T::NAME];
+        pref_args.extend_from_slice(args);
+        execute_sidecar("gdal_create", &pref_args).await?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct GeoTransform {
@@ -17,6 +107,24 @@ pub struct GeoTransform {
 }
 
 impl GeoTransform {
+    pub fn new(
+        x_origin: f64,
+        pixel_width: f64,
+        x_rotation: f64,
+        y_origin: f64,
+        y_rotation: f64,
+        pixel_height: f64,
+    ) -> Self {
+        Self {
+            x_origin,
+            pixel_width,
+            x_rotation,
+            y_origin,
+            y_rotation,
+            pixel_height,
+        }
+    }
+
     pub fn to_vec(&self) -> Vec<f64> {
         vec![
             self.x_origin,
@@ -32,7 +140,7 @@ impl GeoTransform {
         if vec.len() != 6 {
             return None;
         }
-        Some(GeoTransform {
+        Some(Self {
             x_origin: vec[0],
             pixel_width: vec[1],
             x_rotation: vec[2],
@@ -43,7 +151,7 @@ impl GeoTransform {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RasterInfo {
     pub width: usize,
     pub height: usize,
@@ -69,12 +177,34 @@ pub struct FieldInfo {
     pub precision: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DatasetType {
     Raster(RasterInfo),
     Vector(Vec<LayerInfo>),
 }
 
+#[derive(Debug, Clone)]
+/// Représente un ensemble de données géospatiales, qu'il soit raster ou vectoriel.
+///
+/// # Champs
+/// - `filename`: Le chemin du fichier de l'ensemble de données.
+/// - `dataset_type`: Le type de l'ensemble de données (raster ou vectoriel avec les informations associées).
+/// - `bbox`: La boîte englobante de l'ensemble de données.
+/// - `driver`: Le nom du pilote GDAL utilisé pour lire l'ensemble de données.
+/// ```rust
+/// let dataset = Dataset::open("path/to/dataset.tif").await?;
+/// if dataset.is_raster() {
+///     let (width, height) = dataset.raster_size()?;
+///     println!("Raster size: {}x{}", width, height);
+/// } else if dataset.is_vector() {
+///     let layer_count = dataset.layer_count();
+///     println!("Number of layers: {}", layer_count);
+/// }
+/// let bbox = dataset.bbox();
+/// println!("Bounding box: {:?}", bbox);
+/// let projection = dataset.projection();
+/// println!("Projection: {}", projection);
+/// ```
 pub struct Dataset {
     pub filename: String,
     pub dataset_type: DatasetType,
@@ -83,182 +213,159 @@ pub struct Dataset {
 }
 
 impl Dataset {
-    pub async fn open(file_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn open(file_path: &str) -> Result<Self, Box<dyn Error>> {
         let extension = std::path::Path::new(file_path)
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("")
             .to_lowercase();
 
-        let (is_raster, driver_name) = match extension.as_str() {
-            "tif" | "tiff" => (true, GTiff::NAME),
-            "jpeg" | "jpg" => (true, JPEG::NAME),
-            "png" => (true, PNG::NAME),
-            "dat" => (true, ENVI::NAME),
-            "gpkg" => (false, GPKG::NAME),
-            "shp" => (false, Shapefile::NAME),
-            "geojson" | "json" => (false, GeoJSON::NAME),
-            _ => return Err(format!("Unsupported file extension: {}", extension).into()),
-        };
+        let (is_raster, driver_name) = Self::detect_format(&extension)?;
 
         let output = if is_raster {
-            executor("gdalinfo", &["-json", file_path]).await?.0
+            execute_sidecar("gdalinfo", &["-json", file_path]).await?.0
         } else {
-            executor("ogrinfo", &["-json", file_path]).await?.0
+            execute_sidecar("ogrinfo", &["-json", file_path]).await?.0
         };
 
-        let info: serde_json::Value = serde_json::from_str(&output)?;
-        let driver = driver_name.to_string();
+        let info: Value = serde_json::from_str(&output)?;
 
-        if is_raster && info["size"].as_array().is_some() {
-            let dataset_type = Self::parse_raster_info(&info)?;
-            let bbox = Self::parse_raster_bbox(&info)?;
-
-            Ok(Dataset {
-                filename: file_path.to_string(),
-                dataset_type,
-                bbox,
-                driver,
-            })
-        } else if info["layers"].is_array() {
-            let dataset_type = Self::parse_vector_info(&info).await?;
-            let bbox = Self::parse_vector_bbox(&info).unwrap_or_default();
-
-            Ok(Dataset {
-                filename: file_path.to_string(),
-                dataset_type,
-                bbox,
-                driver,
-            })
+        let (dataset_type, bbox) = if is_raster {
+            (
+                Self::parse_raster_info(&info)?,
+                Self::parse_raster_bbox(&info)?,
+            )
         } else {
-            Err("Unable to determine dataset type (neither raster nor vector)".into())
+            (
+                Self::parse_vector_info(&info)?,
+                Self::parse_vector_bbox(&info).unwrap_or_default(),
+            )
+        };
+
+        Ok(Self {
+            filename: file_path.to_string(),
+            dataset_type,
+            bbox,
+            driver: driver_name.to_string(),
+        })
+    }
+
+    fn detect_format(ext: &str) -> Result<(bool, &'static str), Box<dyn Error>> {
+        match ext {
+            "tif" | "tiff" => Ok((true, GTiff::NAME)),
+            "jpeg" | "jpg" => Ok((true, JPEG::NAME)),
+            "png" => Ok((true, PNG::NAME)),
+            "dat" => Ok((true, ENVI::NAME)),
+            "gpkg" => Ok((false, GPKG::NAME)),
+            "shp" => Ok((false, Shapefile::NAME)),
+            "geojson" | "json" => Ok((false, GeoJSON::NAME)),
+            _ => Err(format!("Unsupported extension: {}", ext).into()),
         }
     }
 
-    fn parse_raster_info(info: &Value) -> Result<DatasetType, Box<dyn std::error::Error>> {
+    fn get_array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
+        value[key].as_array().map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    fn parse_raster_info(info: &Value) -> Result<DatasetType, Box<dyn Error>> {
         let size = info["size"].as_array().ok_or("No size info")?;
         let width = size[0].as_u64().ok_or("Invalid width")? as usize;
         let height = size[1].as_u64().ok_or("Invalid height")? as usize;
 
-        let geo_transform = info["geoTransform"]
-            .as_array()
-            .ok_or("No geotransform")?
+        let geo_transform: Vec<f64> = Self::get_array(info, "geoTransform")
             .iter()
-            .map(|v| v.as_f64().ok_or("Invalid geotransform value"))
-            .collect::<Result<Vec<f64>, _>>()?;
+            .filter_map(|v| v.as_f64())
+            .collect();
 
         let projection = info["coordinateSystem"]["wkt"]
             .as_str()
             .unwrap_or("")
             .to_string();
 
-        let binding = vec![];
-        let raster_bands = info["bands"].as_array().unwrap_or(&binding);
+        let eo_bands = Self::get_array(info, "eo:bands");
 
-        let empty_array = vec![];
-        let eo_bands = info["eo:bands"].as_array().unwrap_or(&empty_array);
+        let bands: Vec<RasterBand> = Self::get_array(info, "bands")
+            .iter()
+            .enumerate()
+            .map(|(i, band)| {
+                let data_type = band["type"].as_str().unwrap_or("Unknown").to_string();
+                let mut raster_band = RasterBand::new(i + 1, data_type);
 
-        let mut bands = Vec::new();
-        for (i, raster_band) in raster_bands.iter().enumerate() {
-            let data_type = raster_band["type"]
-                .as_str()
-                .unwrap_or("Unknown")
-                .to_string();
+                if let Some(eo_band) = eo_bands.get(i) {
+                    raster_band.name = eo_band["name"].as_str().map(String::from);
+                    raster_band.description = eo_band["description"].as_str().map(String::from);
+                    raster_band.common_name = eo_band["common_name"].as_str().map(String::from);
+                }
 
-            let mut band = RasterBand::new(i + 1, data_type);
-
-            if let Some(eo_band) = eo_bands.get(i) {
-                band.name = eo_band["name"].as_str().map(|s| s.to_string());
-                band.description = eo_band["description"].as_str().map(|s| s.to_string());
-                band.common_name = eo_band["common_name"].as_str().map(|s| s.to_string());
-            }
-
-            bands.push(band);
-        }
+                raster_band
+            })
+            .collect();
 
         Ok(DatasetType::Raster(RasterInfo {
             width,
             height,
-            geo_transform: GeoTransform::from_vec(geo_transform)
-                .ok_or("Invalid geotransform format")?,
+            geo_transform: GeoTransform::from_vec(geo_transform).ok_or("Invalid geotransform")?,
             projection,
             bands,
         }))
     }
 
-    async fn parse_vector_info(info: &Value) -> Result<DatasetType, Box<dyn std::error::Error>> {
-        let layers_json = info["layers"].as_array().ok_or("No layers info")?;
-        let mut layers = Vec::new();
+    fn parse_vector_info(info: &Value) -> Result<DatasetType, Box<dyn Error>> {
+        let layers: Vec<LayerInfo> = Self::get_array(info, "layers")
+            .iter()
+            .map(|layer| {
+                let fields: Vec<FieldInfo> = Self::get_array(layer, "fields")
+                    .iter()
+                    .map(|field| FieldInfo {
+                        name: field["name"].as_str().unwrap_or("Unnamed").to_string(),
+                        field_type: field["type"].as_str().unwrap_or("Unknown").to_string(),
+                        width: field["width"].as_u64().map(|w| w as usize),
+                        precision: field["precision"].as_u64().map(|p| p as usize),
+                    })
+                    .collect();
 
-        for layer_json in layers_json {
-            let name = layer_json["name"].as_str().unwrap_or("Unnamed").to_string();
-
-            let geometry_type = layer_json["geometryType"]
-                .as_str()
-                .unwrap_or("Unknown")
-                .to_string();
-
-            let feature_count = layer_json["featureCount"].as_u64().map(|c| c as usize);
-
-            let projection = layer_json["coordinateSystem"]["wkt"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-
-            let mut fields = Vec::new();
-            if let Some(fields_json) = layer_json["fields"].as_array() {
-                for field_json in fields_json {
-                    let field_name = field_json["name"].as_str().unwrap_or("Unnamed").to_string();
-
-                    let field_type = field_json["type"].as_str().unwrap_or("Unknown").to_string();
-
-                    let width = field_json["width"].as_u64().map(|w| w as usize);
-                    let precision = field_json["precision"].as_u64().map(|p| p as usize);
-
-                    fields.push(FieldInfo {
-                        name: field_name,
-                        field_type,
-                        width,
-                        precision,
-                    });
+                LayerInfo {
+                    name: layer["name"].as_str().unwrap_or("Unnamed").to_string(),
+                    geometry_type: layer["geometryType"]
+                        .as_str()
+                        .unwrap_or("Unknown")
+                        .to_string(),
+                    feature_count: layer["featureCount"].as_u64().map(|c| c as usize),
+                    projection: layer["coordinateSystem"]["wkt"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                    fields,
                 }
-            }
-
-            layers.push(LayerInfo {
-                name,
-                geometry_type,
-                feature_count,
-                projection,
-                fields,
-            });
-        }
+            })
+            .collect();
 
         Ok(DatasetType::Vector(layers))
     }
 
-    fn parse_raster_bbox(info: &Value) -> Result<BoundingBox, Box<dyn std::error::Error>> {
-        let corner_coordinates = info["cornerCoordinates"]
+    fn parse_raster_bbox(info: &Value) -> Result<BoundingBox, Box<dyn Error>> {
+        let coords = info["cornerCoordinates"]
             .as_object()
             .ok_or("No corner coordinates")?;
 
-        Ok(BoundingBox {
-            xmin: corner_coordinates["lowerLeft"][0].as_f64().unwrap(),
-            ymin: corner_coordinates["lowerLeft"][1].as_f64().unwrap(),
-            xmax: corner_coordinates["upperRight"][0].as_f64().unwrap(),
-            ymax: corner_coordinates["upperRight"][1].as_f64().unwrap(),
-        })
+        Ok(BoundingBox::new(
+            coords["lowerLeft"][0].as_f64().ok_or("Invalid xmin")?,
+            coords["lowerLeft"][1].as_f64().ok_or("Invalid ymin")?,
+            coords["upperRight"][0].as_f64().ok_or("Invalid xmax")?,
+            coords["upperRight"][1].as_f64().ok_or("Invalid ymax")?,
+        ))
     }
 
-    fn parse_vector_bbox(info: &Value) -> Result<BoundingBox, Box<dyn std::error::Error>> {
+    fn parse_vector_bbox(info: &Value) -> Result<BoundingBox, Box<dyn Error>> {
         let parse_extent = |extent: &Value| -> Option<BoundingBox> {
             let arr = extent.as_array()?;
             if arr.len() == 4 {
-                Some(BoundingBox {
-                    xmin: arr[0].as_f64().unwrap_or(0.0),
-                    ymin: arr[1].as_f64().unwrap_or(0.0),
-                    xmax: arr[2].as_f64().unwrap_or(0.0),
-                    ymax: arr[3].as_f64().unwrap_or(0.0),
-                })
+                Some(BoundingBox::new(
+                    arr[0].as_f64()?,
+                    arr[1].as_f64()?,
+                    arr[2].as_f64()?,
+                    arr[3].as_f64()?,
+                ))
             } else {
                 None
             }
@@ -287,39 +394,29 @@ impl Dataset {
         Err("No extent information found".into())
     }
 
-    // Raster-specific methods
+    // ==================== RASTER-SPECIFIC METHODS ====================
 
-    pub fn raster_size(&self) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    pub fn raster_size(&self) -> Result<(usize, usize), Box<dyn Error>> {
         match &self.dataset_type {
-            DatasetType::Raster(raster_info) => Ok((raster_info.width, raster_info.height)),
+            DatasetType::Raster(info) => Ok((info.width, info.height)),
             DatasetType::Vector(_) => Err("Not a raster dataset".into()),
         }
     }
 
-    pub fn geo_transform(&self) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
+    pub fn geo_transform(&self) -> Result<Vec<f64>, Box<dyn Error>> {
         match &self.dataset_type {
-            DatasetType::Raster(raster_info) => Ok(raster_info.geo_transform.to_vec()),
+            DatasetType::Raster(info) => Ok(info.geo_transform.to_vec()),
             DatasetType::Vector(_) => Err("Not a raster dataset".into()),
         }
     }
 
-    pub fn projection(&self) -> String {
+    pub fn rasterband(&self, band_index: usize) -> Result<RasterBand, Box<dyn Error>> {
         match &self.dataset_type {
-            DatasetType::Raster(raster_info) => raster_info.projection.clone(),
-            DatasetType::Vector(layers) => layers
-                .first()
-                .map(|layer| layer.projection.clone())
-                .unwrap_or_default(),
-        }
-    }
-
-    pub fn rasterband(&self, band_index: usize) -> Result<RasterBand, Box<dyn std::error::Error>> {
-        match &self.dataset_type {
-            DatasetType::Raster(raster_info) => {
-                if band_index == 0 || band_index > raster_info.bands.len() {
+            DatasetType::Raster(info) => {
+                if band_index == 0 || band_index > info.bands.len() {
                     return Err("Band index out of range".into());
                 }
-                Ok(raster_info.bands[band_index - 1].clone())
+                Ok(info.bands[band_index - 1].clone())
             }
             DatasetType::Vector(_) => Err("Not a raster dataset".into()),
         }
@@ -327,12 +424,12 @@ impl Dataset {
 
     pub fn raster_count(&self) -> usize {
         match &self.dataset_type {
-            DatasetType::Raster(raster_info) => raster_info.bands.len(),
+            DatasetType::Raster(info) => info.bands.len(),
             DatasetType::Vector(_) => 0,
         }
     }
 
-    // Vector-specific methods
+    // ==================== VECTOR-SPECIFIC METHODS ====================
 
     pub fn layer_count(&self) -> usize {
         match &self.dataset_type {
@@ -341,7 +438,7 @@ impl Dataset {
         }
     }
 
-    pub fn layer(&self, layer_index: usize) -> Result<&LayerInfo, Box<dyn std::error::Error>> {
+    pub fn layer(&self, layer_index: usize) -> Result<&LayerInfo, Box<dyn Error>> {
         match &self.dataset_type {
             DatasetType::Vector(layers) => layers
                 .get(layer_index)
@@ -350,7 +447,7 @@ impl Dataset {
         }
     }
 
-    pub fn layer_by_name(&self, name: &str) -> Result<&LayerInfo, Box<dyn std::error::Error>> {
+    pub fn layer_by_name(&self, name: &str) -> Result<&LayerInfo, Box<dyn Error>> {
         match &self.dataset_type {
             DatasetType::Vector(layers) => layers
                 .iter()
@@ -360,35 +457,31 @@ impl Dataset {
         }
     }
 
-    pub fn layer_name(&self, layer_index: usize) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn layer_name(&self, layer_index: usize) -> Result<String, Box<dyn Error>> {
+        self.layer(layer_index).map(|layer| layer.name.clone())
+    }
+
+    pub fn geometry_type(&self, layer_index: usize) -> Result<String, Box<dyn Error>> {
+        self.layer(layer_index)
+            .map(|layer| layer.geometry_type.clone())
+    }
+
+    pub fn feature_count(&self, layer_index: usize) -> Result<Option<usize>, Box<dyn Error>> {
+        self.layer(layer_index).map(|layer| layer.feature_count)
+    }
+
+    // ==================== COMMON METHODS ====================
+
+    pub fn projection(&self) -> String {
         match &self.dataset_type {
-            DatasetType::Vector(_layers) => self.layer(layer_index).map(|layer| layer.name.clone()),
-            DatasetType::Raster(_) => Err("Not a vector dataset".into()),
+            DatasetType::Raster(info) => info.projection.clone(),
+            DatasetType::Vector(layers) => layers
+                .first()
+                .map(|layer| layer.projection.clone())
+                .unwrap_or_default(),
         }
     }
 
-    pub fn geometry_type(&self, layer_index: usize) -> Result<String, Box<dyn std::error::Error>> {
-        match &self.dataset_type {
-            DatasetType::Vector(_layers) => self
-                .layer(layer_index)
-                .map(|layer| layer.geometry_type.clone()),
-            DatasetType::Raster(_) => Err("Not a vector dataset".into()),
-        }
-    }
-
-    pub fn feature_count(
-        &self,
-        layer_index: usize,
-    ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
-        match &self.dataset_type {
-            DatasetType::Vector(_layers) => {
-                self.layer(layer_index).map(|layer| layer.feature_count)
-            }
-            DatasetType::Raster(_) => Err("Not a vector dataset".into()),
-        }
-    }
-
-    // Common methods
     pub fn bbox(&self) -> BoundingBox {
         self.bbox
     }
@@ -407,5 +500,8 @@ impl Dataset {
 }
 
 pub mod prelude {
-    pub use super::{Dataset, DatasetType, FieldInfo, GeoTransform, LayerInfo, RasterInfo};
+    pub use super::{
+        Dataset, DatasetType, Driver, DriverFormat, ENVI, FieldInfo, GPKG, GTiff, GeoJSON,
+        GeoTransform, JPEG, LayerInfo, PNG, RasterBand, RasterInfo, Shapefile,
+    };
 }

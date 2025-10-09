@@ -25,11 +25,24 @@ pub struct HomeProps {
 pub fn home(props: &HomeProps) -> Html {
     let projects = use_state(Vec::<Project>::new);
     let delete_in_progress = use_state(|| false);
+    let app_version = use_state(|| String::from("..."));
 
     {
         let projects = projects.clone();
         use_effect_with((), move |_| {
             load_projects(projects);
+            || ()
+        });
+    }
+
+    {
+        let app_version = app_version.clone();
+        use_effect_with((), move |_| {
+            spawn_local(async move {
+                if let Some(version) = invoke_without_args("get_app_version").await.as_string() {
+                    app_version.set(version);
+                }
+            });
             || ()
         });
     }
@@ -83,7 +96,10 @@ pub fn home(props: &HomeProps) -> Html {
 
     html! {
         <div class="home-view">
-            <h2>{"Projets précédents"}</h2>
+            <div class="home-header">
+                <h2>{"Projets précédents"}</h2>
+                <span class="app-version">{format!("v{}", *app_version)}</span>
+            </div>
             <div class="project-grid">
                 {
                     (*projects).iter().map(|project| {

@@ -22,6 +22,13 @@ pub struct ProjectBoundingBox {
     pub ymax: f64,
 }
 
+const PREDEFINED_BB: ProjectBoundingBox = ProjectBoundingBox {
+    xmin: 1210000.0,
+    xmax: 1235000.0,
+    ymin: 6070000.0,
+    ymax: 6095000.0,
+};
+
 #[derive(Serialize, Deserialize)]
 struct NewProjectArgs {
     name: String,
@@ -52,6 +59,22 @@ pub fn new_project(props: &NewProjectProps) -> Html {
             s.parse::<f64>().ok()
         }
     }
+
+    let on_test_button_click = {
+        let project_name = project_name.clone();
+        let xmin_str = xmin_str.clone();
+        let ymin_str = ymin_str.clone();
+        let xmax_str = xmax_str.clone();
+        let ymax_str = ymax_str.clone();
+
+        Callback::from(move |_e: MouseEvent| {
+            project_name.set("Test Project".to_string());
+            xmin_str.set(PREDEFINED_BB.xmin.to_string());
+            ymin_str.set(PREDEFINED_BB.ymin.to_string());
+            xmax_str.set(PREDEFINED_BB.xmax.to_string());
+            ymax_str.set(PREDEFINED_BB.ymax.to_string());
+        })
+    };
 
     let is_valid_shape = {
         let xmin = parse_coordinate(&xmin_str);
@@ -323,6 +346,14 @@ pub fn new_project(props: &NewProjectProps) -> Html {
                         <p>{"Le système déterminera automatiquement les régions qui intersectent cette zone."}</p>
                     </div>
                 </div>
+
+                //test button
+                <button
+                    type="button"
+                    onclick={on_test_button_click}
+                >
+                    {"Test"}
+                </button>
 
                 <button
                     type="submit"

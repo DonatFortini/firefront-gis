@@ -5,22 +5,24 @@ use commands::*;
 use tauri::AppHandle;
 use utils::resolve_resource_dir;
 
-use crate::{
-    commands::{load_regions_graph, projects::get_projects},
-    config::AppConfig,
-};
+use crate::{commands::load_regions_graph, config::AppConfig};
 
 pub mod commands;
 pub mod config;
-pub mod fetch_resources;
-pub mod gis_operation;
+pub mod error;
+pub mod services;
 pub mod types;
 pub mod utils;
 
 fn initialize_app(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     AppConfig::init(app_handle.clone())?;
     Ok(AppConfig::with_write(|config| {
-        for dir_path in [&config.cache_dir, &config.temp_dir, &config.projects_dir] {
+        for dir_path in [
+            &config.cache_dir,
+            &config.wms_cache_dir,
+            &config.temp_dir,
+            &config.projects_dir,
+        ] {
             create_dir_all(dir_path)?;
         }
         Ok(())
@@ -62,7 +64,8 @@ pub fn run() {
             get_settings,
             save_settings,
             clear_cache,
-            load_regions_graph
+            load_regions_graph,
+            get_app_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
