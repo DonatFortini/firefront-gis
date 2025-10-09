@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "firefront-gis",
   "version": "0.1.0",
-  "identifier": "com.firefront-gis.desktop",
+  "identifier": "com.fodosoft.firefront-gis",
   "build": {
     "beforeDevCommand": "trunk serve",
     "devUrl": "http://localhost:1420",
@@ -31,8 +31,32 @@
     }
   },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
+    "windows": {
+      "allowDowngrades": true,
+      "certificateThumbprint": null,
+      "digestAlgorithm": null,
+      "nsis": {
+        "languages": [
+          "French"
+        ],
+        "displayLanguageSelector": true
+      },
+      "signCommand": null,
+      "timestampUrl": null,
+      "tsp": false,
+      "webviewInstallMode": {
+        "silent": true,
+        "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "language": [
+          "fr-FR"
+        ]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -56,5 +80,15 @@
       "binaries/gdal/gdalbuildvrt",
       "binaries/gdal/gdaldem"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/DonatFortini/firefront-gis/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ3RTdCNUQ5N0UwREZEQjIKUldTeS9RMSsyYlhuUnpmRHdMVU9SRU16MjMwelZ2c0xEMUR1cS9xN2EzREx3NTkrWXVkeTdhU3gK"
+    }
   }
 }
