@@ -5,7 +5,7 @@ use commands::*;
 use tauri::AppHandle;
 use utils::resolve_resource_dir;
 
-use crate::{commands::load_regions_graph, config::AppConfig};
+use crate::config::AppConfig;
 
 pub mod commands;
 pub mod config;
@@ -64,7 +64,7 @@ pub fn run() {
             get_settings,
             save_settings,
             clear_cache,
-            load_regions_graph,
+            check_regions_database,
             get_app_version
         ])
         .run(tauri::generate_context!())

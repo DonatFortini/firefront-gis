@@ -171,7 +171,7 @@ impl ProcessingService {
         let temp_gpkg = path_builder.temp_file(code, "gpkg");
         let output_gpkg = path_builder.temp_file(&format!("{}_region", code), "gpkg");
 
-        RegionService::create_region_geojson(code, &geojson_path)?;
+        RegionService::check_database()?;
         VectorService::convert_to_gpkg(&geojson_path, &temp_gpkg).await?;
         VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await?;
 

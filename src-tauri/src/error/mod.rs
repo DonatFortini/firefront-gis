@@ -99,6 +99,8 @@ pub enum GisError {
     Parse(#[from] std::num::ParseFloatError),
     #[error("Image processing error: {0}")]
     ImageProcessing(String),
+    #[error("Region not found: {0}")]
+    NotFound(String),
 }
 
 #[derive(Error, Debug)]

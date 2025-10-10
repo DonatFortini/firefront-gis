@@ -4,11 +4,65 @@ use std::path::Path;
 use crate::error::{GisError, GisResult};
 use crate::services::ProjectService;
 use crate::types::{BoundingBox, Driver, GTiff};
-use crate::utils::{create_directory_if_not_exists, execute_sidecar, projects_dir, resolution};
+use crate::utils::{
+    create_directory_if_not_exists, execute_sidecar, projects_dir, resolution, slice_factor,
+};
+
+struct TileCoordinates {
+    x: u32,
+    y: u32,
+}
+
+impl TileCoordinates {
+    fn from_meters(x_meters: f64, y_meters: f64) -> Self {
+        Self {
+            x: (x_meters / 1000.0) as u32,
+            y: (y_meters / 1000.0) as u32,
+        }
+    }
+
+    fn filename(&self, suffix: &str) -> String {
+        format!("{}_{}{}", self.x, self.y, suffix)
+    }
+}
 
 pub struct RasterService;
 
 impl RasterService {
+    fn validate_dimensions(width: usize, height: usize) -> GisResult<()> {
+        let multiple = slice_factor() as usize;
+        if !width.is_multiple_of(multiple) || !height.is_multiple_of(multiple) {
+            return Err(GisError::InvalidGeometry(format!(
+                "Width and height must be multiples of {}",
+                slice_factor()
+            )));
+        }
+        Ok(())
+    }
+
+    fn calculate_tile_bounds(
+        tile_x: usize,
+        tile_y: usize,
+        tile_size: f64,
+        project_bb: &BoundingBox,
+    ) -> BoundingBox {
+        let xmin = project_bb.xmin + (tile_x as f64 * tile_size);
+        let ymax = project_bb.ymax - (tile_y as f64 * tile_size);
+
+        BoundingBox {
+            xmin,
+            ymax,
+            xmax: (xmin + tile_size).min(project_bb.xmax),
+            ymin: (ymax - tile_size).max(project_bb.ymin),
+        }
+    }
+
+    fn cleanup_aux_xml(base_path: &Path) {
+        let extension = base_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let aux_path = base_path.with_extension(format!("{}.aux.xml", extension));
+        std::fs::remove_file(aux_path).ok();
+    }
+
     pub async fn create_reference_raster(
         output_path: &str,
         project_bb: &BoundingBox,
@@ -17,11 +71,7 @@ impl RasterService {
         let width = (project_bb.width() / resolution).ceil() as usize;
         let height = (project_bb.height() / resolution).ceil() as usize;
 
-        if !width.is_multiple_of(500) || !height.is_multiple_of(500) {
-            return Err(GisError::InvalidGeometry(
-                "Width and height must be multiples of 500".to_string(),
-            ));
-        }
+        Self::validate_dimensions(width, height)?;
 
         let args = [
             "-ot",
@@ -86,16 +136,13 @@ impl RasterService {
 
         for tile_y in 0..tiles_y {
             for tile_x in 0..tiles_x {
-                let xmin = project_bb.xmin + (tile_x as f64 * tile_size_meters);
-                let ymax = project_bb.ymax - (tile_y as f64 * tile_size_meters);
-                let xmax = (xmin + tile_size_meters).min(project_bb.xmax);
-                let ymin = (ymax - tile_size_meters).max(project_bb.ymin);
+                let tile_bb =
+                    Self::calculate_tile_bounds(tile_x, tile_y, tile_size_meters, project_bb);
 
-                let coord_x = (xmin / 1000.0) as u32;
-                let coord_y = (ymin / 1000.0) as u32;
+                let coords = TileCoordinates::from_meters(tile_bb.xmin, tile_bb.ymin);
 
-                let output_grd = slice_dir.join(format!("{}_{}_alti.grd", coord_x, coord_y));
-                let output_bmp = slice_dir.join(format!("{}_{}_{}.bmp", coord_x, coord_y, factor));
+                let output_grd = slice_dir.join(coords.filename("_alti.grd"));
+                let output_bmp = slice_dir.join(coords.filename("_altiImage.bmp"));
 
                 execute_sidecar(
                     "gdal_translate",
@@ -103,10 +150,10 @@ impl RasterService {
                         "-of",
                         "AAIGrid",
                         "-projwin",
-                        &xmin.to_string(),
-                        &ymax.to_string(),
-                        &xmax.to_string(),
-                        &ymin.to_string(),
+                        &tile_bb.xmin.to_string(),
+                        &tile_bb.ymax.to_string(),
+                        &tile_bb.xmax.to_string(),
+                        &tile_bb.ymin.to_string(),
                         "-co",
                         "FORCE_CELLSIZE=YES",
                         "-co",
@@ -140,10 +187,7 @@ impl RasterService {
                 .await
                 .map_err(|e| GisError::SliceFailed(format!("Failed to create BMP: {}", e)))?;
 
-                let aux_xml = output_bmp.with_extension("bmp.aux.xml");
-                if aux_xml.exists() {
-                    std::fs::remove_file(aux_xml).ok();
-                }
+                Self::cleanup_aux_xml(&output_bmp);
             }
         }
 
@@ -165,18 +209,16 @@ impl RasterService {
         let ortho_image = Self::load_image(&ortho_path)?;
 
         let project_bb = ProjectService::get_project_bounding_box(project_name).await?;
-        let (base_x, base_y) = (
-            (project_bb.xmin / 1000.0) as u32,
-            (project_bb.ymin / 1000.0) as u32,
-        );
+
+        let base_coords = TileCoordinates::from_meters(project_bb.xmin, project_bb.ymin);
 
         Self::process_slices(
             &veget_image,
             &ortho_image,
             &slice_dir,
             slice_factor,
-            base_x,
-            base_y,
+            base_coords.x,
+            base_coords.y,
         )?;
 
         if elevation_path.exists() {
@@ -216,9 +258,8 @@ impl RasterService {
                 let coord_y = base_y + (height - img_y - factor) / 100;
 
                 let veget_file =
-                    slice_dir.join(format!("{}_{}_{}_veget.jpg", coord_x, coord_y, factor));
-                let ortho_file =
-                    slice_dir.join(format!("{}_{}_{}_ortho.jpg", coord_x, coord_y, factor));
+                    slice_dir.join(format!("{}_{}_veget_{}.jpg", coord_x, coord_y, factor));
+                let ortho_file = slice_dir.join(format!("{}_{}_{}.jpg", coord_x, coord_y, factor));
 
                 cropped_ortho
                     .save(&ortho_file)
@@ -263,6 +304,7 @@ impl RasterService {
         std::fs::write(file_path, fixed_lines.join("\n"))?;
         Ok(())
     }
+
     fn load_image(path: &Path) -> GisResult<DynamicImage> {
         image::ImageReader::open(path)
             .map_err(|e| GisError::ImageProcessing(format!("Failed to open: {}", e)))?

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use tauri::command;
 
 use crate::config::get_config;
@@ -83,18 +82,8 @@ pub fn clear_cache() -> Result<String, String> {
 }
 
 #[command]
-pub async fn load_regions_graph() -> Result<(), String> {
-    let graph_path = get_config(|config| config.regions_graph_path());
-
-    if !Path::new(&graph_path).exists() {
-        println!("Regions graph file not found, building...");
-        RegionService::build_regions_graph(graph_path.to_str())
-            .await
-            .map_err(|e| format!("Failed to build regions graph: {}", e))?;
-    }
-
-    println!("Regions graph loaded successfully");
-    Ok(())
+pub fn check_regions_database() -> Result<bool, String> {
+    RegionService::check_database().map_err(|e| e.to_string())
 }
 
 #[command]

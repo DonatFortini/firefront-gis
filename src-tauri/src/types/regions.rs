@@ -1,27 +1,37 @@
-use std::{collections::HashMap, error::Error, fs, path::Path};
-
 use geo::{Contains, Intersects};
 use geo_types::Geometry;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use wkt::ToWkt;
 
-use crate::{config::get_config, types::BoundingBox};
+use crate::{error::GisError, services::gis::RegionService, types::BoundingBox};
 
-fn serialize_geometry<S>(geom: &Geometry, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_geometry<S>(geom: &Option<Geometry>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let wkt_string = geom.to_wkt().to_string();
-    serializer.serialize_str(&wkt_string)
+    match geom {
+        Some(g) => {
+            let wkt_string = g.to_wkt().to_string();
+            serializer.serialize_some(&wkt_string)
+        }
+        None => serializer.serialize_none(),
+    }
 }
 
-fn deserialize_geometry<'de, D>(deserializer: D) -> Result<Geometry, D::Error>
+fn deserialize_geometry<'de, D>(deserializer: D) -> Result<Option<Geometry>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let wkt_string = String::deserialize(deserializer)?;
-    wkt::TryFromWkt::try_from_wkt_str(&wkt_string)
-        .map_err(|e| de::Error::custom(format!("Failed to deserialize Geometry from WKT: {}", e)))
+    let opt = Option::<String>::deserialize(deserializer)?;
+    match opt {
+        Some(wkt_string) => {
+            let geom = wkt::TryFromWkt::try_from_wkt_str(&wkt_string).map_err(|e| {
+                de::Error::custom(format!("Failed to deserialize Geometry from WKT: {}", e))
+            })?;
+            Ok(Some(geom))
+        }
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,9 +40,12 @@ pub struct Region {
     pub name: String,
     #[serde(
         serialize_with = "serialize_geometry",
-        deserialize_with = "deserialize_geometry"
+        deserialize_with = "deserialize_geometry",
+        skip_serializing_if = "Option::is_none",
+        default
     )]
-    pub extent: Geometry,
+    pub extent: Option<Geometry>,
+    #[serde(default)]
     pub neighbors: Vec<String>,
 }
 
@@ -41,7 +54,16 @@ impl Region {
         Self {
             code,
             name,
-            extent,
+            extent: Some(extent),
+            neighbors: Vec::new(),
+        }
+    }
+
+    pub fn from_db(code: String, name: String) -> Self {
+        Self {
+            code,
+            name,
+            extent: None,
             neighbors: Vec::new(),
         }
     }
@@ -64,96 +86,43 @@ impl Region {
         &self.name
     }
 
-    pub fn extent(&self) -> &Geometry {
-        &self.extent
+    pub fn extent(&self) -> Option<&Geometry> {
+        self.extent.as_ref()
     }
 
     pub fn contains(&self, bounding_box: &BoundingBox) -> bool {
-        self.extent.contains(&bounding_box.to_geometry())
+        self.extent
+            .as_ref()
+            .is_some_and(|e| e.contains(&bounding_box.to_geometry()))
     }
 
     pub fn intersects(&self, bounding_box: &BoundingBox) -> bool {
-        self.extent.intersects(&bounding_box.to_geometry())
+        self.extent
+            .as_ref()
+            .is_some_and(|e| e.intersects(&bounding_box.to_geometry()))
     }
 }
 
-fn load_regions_graph() -> Result<HashMap<String, Region>, Box<dyn Error>> {
-    let graph_path = get_config(|config| config.regions_graph_path());
+pub fn get_region(region_id: &str) -> Result<Region, GisError> {
+    let (code, name) = RegionService::get_region(region_id)?
+        .ok_or_else(|| GisError::NotFound(format!("Region code '{}' not found", region_id)))?;
 
-    if !Path::new(&graph_path).exists() {
-        return Err(format!("Regions graph file not found: {}", graph_path.display()).into());
-    }
-
-    let json_str = fs::read_to_string(graph_path)?;
-    let graph: HashMap<String, Region> = serde_json::from_str(&json_str)?;
-
-    Ok(graph)
+    Ok(Region::from_db(code, name))
 }
 
-pub fn get_region(region_id: &str) -> Result<Region, Box<dyn Error>> {
-    let graph = load_regions_graph()?;
-
-    graph
-        .get(region_id)
-        .cloned()
-        .ok_or_else(|| format!("Region code '{}' not found in the graph", region_id).into())
+pub fn get_neighbors(region_id: &str) -> Result<Vec<String>, GisError> {
+    RegionService::get_neighbors(region_id)
 }
 
-pub fn get_neighbors(region_id: &str) -> Result<Vec<Region>, Box<dyn Error>> {
-    let graph = load_regions_graph()?;
+pub fn find_intersecting_regions(bounding_box: &BoundingBox) -> Result<Vec<Region>, GisError> {
+    let results = RegionService::find_intersecting_regions(bounding_box)?;
 
-    let region = graph
-        .get(region_id)
-        .ok_or_else(|| format!("Region code '{}' not found in the graph", region_id))?;
-
-    let neighbors: Vec<Region> = region
-        .neighbors
-        .iter()
-        .filter_map(|neighbor_code| graph.get(neighbor_code).cloned())
-        .collect();
-
-    Ok(neighbors)
-}
-
-pub fn find_intersecting_regions(
-    bounding_box: &BoundingBox,
-) -> Result<Vec<Region>, Box<dyn Error>> {
-    let graph = load_regions_graph()?;
-
-    let intersecting_regions: Vec<Region> = graph
-        .values()
-        .filter(|region| region.intersects(bounding_box))
-        .cloned()
-        .collect();
-
-    Ok(intersecting_regions)
-}
-
-pub fn find_containing_regions(bounding_box: &BoundingBox) -> Result<Vec<Region>, Box<dyn Error>> {
-    let graph = load_regions_graph()?;
-
-    let containing_regions: Vec<Region> = graph
-        .values()
-        .filter(|region| region.contains(bounding_box))
-        .cloned()
-        .collect();
-
-    Ok(containing_regions)
-}
-
-pub fn get_all_regions() -> Result<Vec<Region>, Box<dyn Error>> {
-    let graph = load_regions_graph()?;
-    Ok(graph.into_values().collect())
-}
-
-pub fn get_all_region_codes() -> Result<Vec<String>, Box<dyn Error>> {
-    let graph = load_regions_graph()?;
-    Ok(graph.keys().cloned().collect())
+    Ok(results
+        .into_iter()
+        .map(|(code, name)| Region::from_db(code, name))
+        .collect())
 }
 
 pub mod prelude {
-    pub use super::{
-        Region, find_containing_regions, find_intersecting_regions, get_all_region_codes,
-        get_all_regions, get_neighbors, get_region,
-    };
+    pub use super::{Region, find_intersecting_regions, get_neighbors, get_region};
 }
