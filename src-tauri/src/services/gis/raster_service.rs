@@ -203,10 +203,16 @@ impl RasterService {
 
         let veget_path = project_dir.join(format!("{}_VEGET.jpeg", project_name));
         let ortho_path = project_dir.join(format!("{}_ORTHO.jpeg", project_name));
+        let altitude_path = project_dir.join(format!("{}_ALTITUDE.jpeg", project_name));
         let elevation_path = project_dir.join("resources/elevation.tif");
 
         let veget_image = Self::load_image(&veget_path)?;
         let ortho_image = Self::load_image(&ortho_path)?;
+        let altitude_image = if altitude_path.exists() {
+            Some(Self::load_image(&altitude_path)?)
+        } else {
+            None
+        };
 
         let project_bb = ProjectService::get_project_bounding_box(project_name).await?;
 
@@ -215,6 +221,7 @@ impl RasterService {
         Self::process_slices(
             &veget_image,
             &ortho_image,
+            altitude_image.as_ref(),
             &slice_dir,
             slice_factor,
             base_coords.x,
@@ -238,6 +245,7 @@ impl RasterService {
     fn process_slices(
         veget: &DynamicImage,
         ortho: &DynamicImage,
+        altitude: Option<&DynamicImage>,
         slice_dir: &Path,
         factor: u32,
         base_x: u32,
@@ -267,6 +275,15 @@ impl RasterService {
                 cropped_veget
                     .save(&veget_file)
                     .map_err(|e| GisError::SliceFailed(e.to_string()))?;
+
+                if let Some(altitude_img) = altitude {
+                    let cropped_altitude = altitude_img.crop_imm(img_x, img_y, factor, factor);
+                    let altitude_file =
+                        slice_dir.join(format!("{}_{}_altitude_{}.jpg", coord_x, coord_y, factor));
+                    cropped_altitude
+                        .save(&altitude_file)
+                        .map_err(|e| GisError::SliceFailed(e.to_string()))?;
+                }
             }
         }
 

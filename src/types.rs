@@ -30,6 +30,8 @@ pub enum ViewMode {
     Vegetation,
     #[serde(rename = "satellite")]
     Satellite,
+    #[serde(rename = "altitude")]
+    Altitude,
 }
 
 impl std::fmt::Display for ViewMode {
@@ -37,6 +39,7 @@ impl std::fmt::Display for ViewMode {
         match self {
             ViewMode::Vegetation => write!(f, "vegetation"),
             ViewMode::Satellite => write!(f, "satellite"),
+            ViewMode::Altitude => write!(f, "altitude"),
         }
     }
 }
@@ -48,6 +51,7 @@ impl std::str::FromStr for ViewMode {
         match s.to_lowercase().as_str() {
             "vegetation" => Ok(ViewMode::Vegetation),
             "satellite" => Ok(ViewMode::Satellite),
+            "altitude" => Ok(ViewMode::Altitude),
             _ => Err(format!("Invalid view mode: {}", s)),
         }
     }

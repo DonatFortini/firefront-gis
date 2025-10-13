@@ -54,11 +54,7 @@ pub fn project(props: &ProjectProps) -> Html {
 
     let on_toggle_view = {
         let view_mode = view_mode.clone();
-        Callback::from(move |_event: MouseEvent| {
-            let new_mode = match *view_mode {
-                ViewMode::Vegetation => ViewMode::Satellite,
-                ViewMode::Satellite => ViewMode::Vegetation,
-            };
+        Callback::from(move |new_mode: ViewMode| {
             view_mode.set(new_mode);
         })
     };
@@ -117,9 +113,41 @@ pub fn project(props: &ProjectProps) -> Html {
 struct ProjectSidebarProps {
     project_name: String,
     view_mode: ViewMode,
-    on_toggle_view: Callback<MouseEvent>,
+    on_toggle_view: Callback<ViewMode>,
     on_export: Callback<MouseEvent>,
     on_return: Callback<MouseEvent>,
+}
+
+async fn load_project_image(project_name: &str, view_mode: &ViewMode) -> Result<String, String> {
+    let file_path = match view_mode {
+        ViewMode::Vegetation => format!("{}_VEGET.jpeg", project_name),
+        ViewMode::Satellite => format!("{}_ORTHO.jpeg", project_name),
+        ViewMode::Altitude => format!("{}_ALTITUDE.jpeg", project_name),
+    };
+
+    #[derive(Serialize)]
+    struct GetProjectDataArgs {
+        name: String,
+        data: String,
+    }
+
+    let args = GetProjectDataArgs {
+        name: project_name.to_string(),
+        data: file_path,
+    };
+
+    match invoke(
+        "get_project_data",
+        serde_wasm_bindgen::to_value(&args).unwrap(),
+    )
+    .await
+    {
+        result if result.is_string() => result
+            .as_string()
+            .map(|path| convertFileSrc(&path, None))
+            .ok_or_else(|| "Invalid path".to_string()),
+        _ => Err("Failed to load image".to_string()),
+    }
 }
 
 #[styled_component(ProjectSidebar)]
@@ -156,6 +184,14 @@ fn project_sidebar(props: &ProjectSidebarProps) -> Html {
             flex: 1;
         }
         
+        .view-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
         button {
             width: 100%;
             padding: 16px 20px;
@@ -182,13 +218,22 @@ fn project_sidebar(props: &ProjectSidebarProps) -> Html {
             transform: translateY(0);
         }
         
-        .toggle-btn {
-            background: linear-gradient(135deg, #ff4141 0%, #ff6b6b 100%);
-            color: white;
+        .view-btn {
+            background-color: #2a2a2a;
+            color: #cccccc;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
-        .toggle-btn:hover {
-            background: linear-gradient(135deg, #ff5757 0%, #ff7f7f 100%);
+        .view-btn.active {
+            background: linear-gradient(135deg, #ff4141 0%, #ff6b6b 100%);
+            color: white;
+            border-color: transparent;
+        }
+        
+        .view-btn:hover:not(.active) {
+            background-color: #333333;
+            color: #ffffff;
+            border-color: rgba(255, 255, 255, 0.2);
         }
         
         .export-btn {
@@ -235,6 +280,12 @@ fn project_sidebar(props: &ProjectSidebarProps) -> Html {
                 gap: 8px;
             }
             
+            .view-buttons {
+                flex-direction: row;
+                border-bottom: none;
+                padding-bottom: 0;
+            }
+            
             button {
                 padding: 10px 16px;
                 font-size: 0.9rem;
@@ -243,6 +294,11 @@ fn project_sidebar(props: &ProjectSidebarProps) -> Html {
         "#
     );
 
+    let on_view_change = {
+        let on_toggle_view = props.on_toggle_view.clone();
+        Callback::from(move |mode: ViewMode| on_toggle_view.emit(mode))
+    };
+
     html! {
         <div class={style}>
             <h3>
@@ -250,18 +306,31 @@ fn project_sidebar(props: &ProjectSidebarProps) -> Html {
             </h3>
 
             <div class="button-group">
-                <button class="toggle-btn" onclick={props.on_toggle_view.clone()}>
-                    <span>
-                        {match props.view_mode {
-                            ViewMode::Vegetation => "🛰️",
-                            ViewMode::Satellite => "🌿",
-                        }}
-                    </span>
-                    {match props.view_mode {
-                        ViewMode::Vegetation => "Vue satellite",
-                        ViewMode::Satellite => "Vue végétation",
-                    }}
-                </button>
+                <div class="view-buttons">
+                    <button
+                        class={classes!("view-btn", (props.view_mode == ViewMode::Vegetation).then_some("active"))}
+                        onclick={on_view_change.reform(|_| ViewMode::Vegetation)}
+                    >
+                        <span>{"🌿"}</span>
+                        {"Végétation"}
+                    </button>
+
+                    <button
+                        class={classes!("view-btn", (props.view_mode == ViewMode::Satellite).then_some("active"))}
+                        onclick={on_view_change.reform(|_| ViewMode::Satellite)}
+                    >
+                        <span>{"🛰️"}</span>
+                        {"Satellite"}
+                    </button>
+
+                    <button
+                        class={classes!("view-btn", (props.view_mode == ViewMode::Altitude).then_some("active"))}
+                        onclick={on_view_change.reform(|_| ViewMode::Altitude)}
+                    >
+                        <span>{"⛰️"}</span>
+                        {"Altitude"}
+                    </button>
+                </div>
 
                 <button class="export-btn" onclick={props.on_export.clone()}>
                     <span>{"📦"}</span>
@@ -429,37 +498,6 @@ fn error_indicator() -> Html {
             <h4>{"Erreur de chargement"}</h4>
             <p>{"Impossible de charger l'image du projet"}</p>
         </div>
-    }
-}
-
-async fn load_project_image(project_name: &str, view_mode: &ViewMode) -> Result<String, String> {
-    let file_path = match view_mode {
-        ViewMode::Vegetation => format!("{}_VEGET.jpeg", project_name),
-        ViewMode::Satellite => format!("{}_ORTHO.jpeg", project_name),
-    };
-
-    #[derive(Serialize)]
-    struct GetProjectDataArgs {
-        name: String,
-        data: String,
-    }
-
-    let args = GetProjectDataArgs {
-        name: project_name.to_string(),
-        data: file_path,
-    };
-
-    match invoke(
-        "get_project_data",
-        serde_wasm_bindgen::to_value(&args).unwrap(),
-    )
-    .await
-    {
-        result if result.is_string() => result
-            .as_string()
-            .map(|path| convertFileSrc(&path, None))
-            .ok_or_else(|| "Invalid path".to_string()),
-        _ => Err("Failed to load image".to_string()),
     }
 }
 

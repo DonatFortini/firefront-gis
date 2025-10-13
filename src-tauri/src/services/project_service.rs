@@ -442,9 +442,9 @@ impl ProjectService {
         project_bb: &BoundingBox,
     ) -> ProjectResult<()> {
         Progress::status("Finalisation");
-        let mut tracker = ProgressTracker::new("Finalisation", 2);
+        let mut tracker = ProgressTracker::new("Finalisation", 4);
 
-        tracker.set_step(1, "Export en JPEG");
+        tracker.set_step(1, "Export en JPEG - Végétation");
         Self::export_to_jpg(
             project_file,
             &format!("{}/{}_VEGET.jpeg", project_folder, name),
@@ -462,8 +462,51 @@ impl ProjectService {
         )
         .await?;
 
-        Progress::status("Nettoyage");
+        tracker.set_step(3, "Export en JPEG - Altitude");
+        let elevation_path = format!("{}/resources/elevation.tif", project_folder);
+        if std::path::Path::new(&elevation_path).exists() {
+            Self::process_elevation_to_jpeg(
+                &elevation_path,
+                &format!("{}/{}_ALTITUDE.jpeg", project_folder, name),
+                project_folder,
+            )
+            .await?;
+        }
+
+        tracker.set_step(4, "Nettoyage");
         clean_tmp(None).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn process_elevation_to_jpeg(
+        elevation_path: &str,
+        output_path: &str,
+        project_folder: &str,
+    ) -> ProjectResult<()> {
+        let temp_colored = format!("{}/temp_colored_altitude.tif", temp_dir().display());
+        let color_ramp_path = format!("{}/resources/color_ramp.txt", project_folder);
+
+        execute_sidecar(
+            "gdaldem",
+            &[
+                "color-relief",
+                elevation_path,
+                &color_ramp_path,
+                &temp_colored,
+                "-of",
+                "GTiff",
+            ],
+        )
+        .await
+        .map_err(|e| ProjectError::ExportFailed {
+            project: elevation_path.to_string(),
+            message: e.to_string(),
+        })?;
+
+        Self::export_to_jpg(&temp_colored, output_path).await?;
+
+        tokio::fs::remove_file(&temp_colored).await.ok();
 
         Ok(())
     }
