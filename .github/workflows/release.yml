@@ -45,11 +45,6 @@ jobs:
 
       - name: Build frontend with Trunk
         run: trunk build --release
-
-      - name: Set NO_STRIP for Linux
-        if: matrix.platform == 'ubuntu-22.04'
-        run: echo "NO_STRIP=true" >> $GITHUB_ENV
-
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -61,5 +56,4 @@ jobs:
           releaseName: "Firefront GIS v__VERSION__"
           releaseBody: "Téléchargez et installez la dernière version de Firefront GIS. Choisissez le fichier approprié pour votre système d'exploitation."
           releaseDraft: false
-          prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.platform == 'ubuntu-22.04' && '--bundles deb,rpm' || matrix.args }}
