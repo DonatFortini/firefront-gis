@@ -3,6 +3,7 @@ use std::fs::create_dir_all;
 use commands::*;
 
 use tauri::AppHandle;
+use tauri_plugin_updater::UpdaterExt;
 use utils::resolve_resource_dir;
 
 use crate::config::AppConfig;
@@ -29,11 +30,41 @@ fn initialize_app(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Erro
     })?)
 }
 
+async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let updater = app.updater_builder().build()?;
+
+    if let Some(update) = updater.check().await? {
+        println!(
+            "Update available: {} -> {}",
+            update.current_version, update.version
+        );
+
+        update
+            .download_and_install(
+                |chunk_length, content_length| {
+                    println!("Downloaded {} of {:?}", chunk_length, content_length);
+                },
+                || {
+                    println!("Download finished");
+                },
+            )
+            .await?;
+
+        println!("Update installed, restarting...");
+        app.restart();
+    } else {
+        println!("No updates available");
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle();
             let res_dir = resolve_resource_dir(app_handle, "resources")?;
@@ -44,6 +75,14 @@ pub fn run() {
             match initialize_app(app_handle) {
                 Ok(_) => {
                     println!("Application setup completed successfully");
+
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = check_for_updates(handle).await {
+                            eprintln!("Failed to check for updates: {}", e);
+                        }
+                    });
+
                     Ok(())
                 }
                 Err(e) => {

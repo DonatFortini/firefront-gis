@@ -5,7 +5,7 @@ use tokio::fs;
 
 use crate::error::{GisError, GisResult, ProjectError, ProjectResult};
 use crate::services::{
-    ArchiveService, FetchService, ProcessingService, RasterService, VectorService,
+    ArchiveService, FetchService, ProcessingService, RasterService, RegionService, VectorService,
 };
 use crate::types::BoundingBox;
 use crate::types::regions::find_intersecting_regions;
@@ -159,6 +159,12 @@ impl ProjectService {
 
         Self::download_data_phase(&region_codes).await?;
         let project_folder = Self::initialize_project(&name, &project_bb).await?;
+
+        for region in &regions {
+            RegionService::create_region_file(region)
+                .await
+                .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
+        }
         Self::prepare_layers_phase(&name, &region_codes, &project_bb, &project_folder).await?;
 
         Self::process_elevation_phase(&region_codes, &project_bb, &project_folder).await?;
@@ -342,8 +348,7 @@ impl ProjectService {
                 region_codes.len(),
             );
 
-            clean_tmp(Some(".gpkg")).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
-
+            //TODO : enlever sentier de randonnée
             let (r, v, rp, t) = ProcessingService::prepare_layers(project_bb, code)
                 .await
                 .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
@@ -355,6 +360,7 @@ impl ProjectService {
             for (layer, paths) in t {
                 topo_gpkgs.entry(layer).or_default().extend(paths);
             }
+            clean_tmp(Some(".gpkg")).map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
         }
 
         Self::merge_layers(

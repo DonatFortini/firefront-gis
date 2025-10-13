@@ -59,11 +59,11 @@ impl Region {
         }
     }
 
-    pub fn from_db(code: String, name: String) -> Self {
+    pub fn from_db(code: String, name: String, extent: Option<Geometry>) -> Self {
         Self {
             code,
             name,
-            extent: None,
+            extent,
             neighbors: Vec::new(),
         }
     }
@@ -104,10 +104,10 @@ impl Region {
 }
 
 pub fn get_region(region_id: &str) -> Result<Region, GisError> {
-    let (code, name) = RegionService::get_region(region_id)?
+    let (code, name, geom) = RegionService::get_region(region_id)?
         .ok_or_else(|| GisError::NotFound(format!("Region code '{}' not found", region_id)))?;
 
-    Ok(Region::from_db(code, name))
+    Ok(Region::from_db(code, name, geom))
 }
 
 pub fn get_neighbors(region_id: &str) -> Result<Vec<String>, GisError> {
@@ -115,12 +115,10 @@ pub fn get_neighbors(region_id: &str) -> Result<Vec<String>, GisError> {
 }
 
 pub fn find_intersecting_regions(bounding_box: &BoundingBox) -> Result<Vec<Region>, GisError> {
-    let results = RegionService::find_intersecting_regions(bounding_box)?;
-
-    Ok(results
+    RegionService::find_intersecting_regions(bounding_box)?
         .into_iter()
-        .map(|(code, name)| Region::from_db(code, name))
-        .collect())
+        .map(|(code, _)| get_region(&code))
+        .collect()
 }
 
 pub mod prelude {

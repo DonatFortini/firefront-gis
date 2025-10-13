@@ -14,64 +14,24 @@ Développée spécifiquement pour répondre aux besoins du SIS2B, Firefront GIS 
 
 ## Fonctionnalités principales
 
-- **Intégration de sources officielles** : Téléchargement et traitement automatisés des données IGN (BD TOPO®, BD FORÊT®, RPG)
+- **Intégration de sources officielles** : Téléchargement et traitement automatisés des données IGN (BD TOPO®, BD FORÊT®, RPG, RGEALTI)
 - **Analyse multicouche avancée** :
   - Couverture végétale avec différenciation des essences (feuillus, conifères, etc.)
   - Éléments topographiques (bâtiments, routes, voies ferrées)
   - Ressources hydrauliques (cours d'eau, plans d'eau, réservoirs)
   - Parcelles agricoles
-- **Double mode de visualisation** : Basculement entre végétation et imagerie satellite
+  - Altitude (modèle numérique de terrain)
 - **Fonctionnalité d'export** : Export des projets au format attendu par Vulcain, ainsi que les geopackage associés pour importation dans d'autres systèmes SIG
 - **Analyse régionale intelligente** : Détermination automatique des départements et régions administratives intersectant la zone d'intérêt
 - **Interface utilisateur intuitive** : Conçue pour une prise en main rapide par les utilisateurs non techniques
 - **Compatibilité multiplateforme** : Fonctionne sur Windows, macOS et Linux
 - **Système de cache** : Gestion efficace des données pour éviter les téléchargements redondants
 
-## Prérequis techniques
-
-L'application nécessite l'installation préalable des composants externes suivants :
-
-- **GDAL** (Geospatial Data Abstraction Library) : Bibliothèque de traitement des données géospatiales
-
-⚠️ **IMPORTANT** : GDAL doit impérativement être installé sur votre système **avant la compilation** du projet, pas seulement pour son exécution. Cette dépendance est requise lors du processus de build.
-
 ## Installation
 
 ### À partir des sources
 
-1. **Installez les dépendances requises** :
-
-   - GDAL avec les bibliothèques de développement (headers)
-
-   **Note** : Sur Linux, vous pouvez installer GDAL via :
-
-   # Ubuntu/Debian
-
-   ```bash
-   sudo apt-get install libgdal-dev gdal-bin
-   ```
-
-   # Fedora
-
-   ```bash
-   sudo dnf install gdal-devel gdal
-   ```
-
-   # Arch Linux
-
-   ```bash
-   sudo pacman -S gdal
-   ```
-
-   # macOS
-
-   ```bash
-   brew install gdal
-   ```
-
-   Sur Windows, utilisez les installateurs officiels de GDAL comme OSGEO4W et assurez-vous que les variables d'environnement sont correctement configurées.
-
-2. Assurez-vous que Rust et Cargo et trunk sont installés sur votre système ainsi que Tauri CLI et la chaîne d'outils webassembly.
+1. Assurez-vous que Rust et Cargo et trunk sont installés sur votre système ainsi que Tauri CLI et la chaîne d'outils webassembly.
 
    - Installez Rust et Cargo via rustup :
 
@@ -79,32 +39,32 @@ L'application nécessite l'installation préalable des composants externes suiva
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
-3. Installez la chaîne d'outils WebAssembly
+2. Installez la chaîne d'outils WebAssembly
 
    ```bash
    rustup target add wasm32-unknown-unknown
    ```
 
-4. Installez Tauri CLI
+3. Installez Tauri CLI
 
    ```bash
    cargo install tauri-cli
    ```
 
-5. Installez Trunk
+4. Installez Trunk
 
    ```bash
    cargo install trunk
    ```
 
-6. Clonez le dépôt
+5. Clonez le dépôt
 
    ```bash
    git clone https://github.com/DonatFortini/firefront-gis.git
    cd firefront-gis
    ```
 
-7. Démarrez le serveur de développement
+6. Démarrez le serveur de développement
 
    ```bash
    cargo tauri dev
@@ -146,18 +106,6 @@ Accédez au panneau de configuration pour :
 - Modifier le répertoire de sortie des projets exportés
 - Vider le cache de données pour libérer de l'espace disque
 
-## Architecture technique
-
-- **src-tauri/** : Code backend (Rust avec Tauri)
-  - **src/** : Fonctionnalités principales pour les opérations SIG
-  - **commands.rs** : Gestionnaires de commandes Tauri
-  - **gis_operation/** : Logique de traitement géospatial
-- **src/** : Code frontend (Rust avec Yew)
-  - **app.rs** : Composant principal de l'application
-  - **home.rs** : Vue de liste des projets
-  - **project.rs** : Visualiseur de projets
-  - **new_project.rs** : Interface de création de projets
-
 ## Développement
 
 Ce projet utilise :
@@ -190,5 +138,3 @@ Lors de l'exportation, l'application :
 3. fournit le fichier au format TIFF qui est le fichier projet original
 4. Conditionne toutes les données dans un format compressé
 5. Enregistre l'ensemble dans l'emplacement de sortie spécifié
-
-

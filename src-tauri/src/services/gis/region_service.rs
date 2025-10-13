@@ -1,8 +1,12 @@
 use crate::error::{GisError, GisResult};
-use crate::types::BoundingBox;
+use crate::services::VectorService;
+use crate::types::regions::get_region;
+use crate::types::{BoundingBox, Region};
 use crate::utils::resource_dir;
-use geo::Intersects;
+use crate::utils::temp_dir;
+use geo::{Geometry, Intersects};
 use rusqlite::{Connection, params};
+use std::fs;
 use std::str::FromStr;
 
 pub struct RegionService;
@@ -75,17 +79,22 @@ impl RegionService {
         Ok(neighbors)
     }
 
-    pub fn get_region(region_code: &str) -> GisResult<Option<(String, String)>> {
+    pub fn get_region(region_code: &str) -> GisResult<Option<(String, String, Option<Geometry>)>> {
         let conn = Self::get_connection()?;
 
         let result = conn.query_row(
-            "SELECT code, name FROM regions WHERE code = ?",
+            "SELECT code, name, geometry FROM regions WHERE code = ?",
             params![region_code],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?)),
         );
 
         match result {
-            Ok(data) => Ok(Some(data)),
+            Ok((code, name, wkt_str)) => {
+                let geom = wkt::Wkt::from_str(&wkt_str)
+                    .ok()
+                    .and_then(|wkt| wkt.try_into().ok());
+                Ok(Some((code, name, geom)))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(GisError::Dataset(e.to_string())),
         }
@@ -105,5 +114,66 @@ impl RegionService {
             .map_err(|e| GisError::Dataset(e.to_string()))?;
 
         Ok(version.is_ok() && count > 0)
+    }
+
+    pub fn create_region_geojson(region_id: &str, output_path: &str) -> GisResult<()> {
+        let region = get_region(region_id).map_err(|e| GisError::InvalidGeometry(e.to_string()))?;
+
+        let geometry: geojson::Geometry = region.extent().ok_or(GisError::ExtentNotFound)?.into();
+
+        let properties = serde_json::json!({
+            "code": region.code(),
+            "name": region.name(),
+            "neighbors": region.neighbors()
+        });
+
+        let feature = geojson::Feature {
+            bbox: None,
+            geometry: Some(geometry),
+            id: None,
+            properties: Some(properties.as_object().unwrap().clone()),
+            foreign_members: None,
+        };
+
+        let feature_collection = geojson::FeatureCollection {
+            bbox: None,
+            features: vec![feature],
+            foreign_members: Some(
+                serde_json::json!({
+                    "crs": {
+                        "type": "name",
+                        "properties": {"name": "EPSG:2154"}
+                    }
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        };
+
+        let geojson_string = geojson::GeoJson::FeatureCollection(feature_collection).to_string();
+        fs::write(output_path, geojson_string)?;
+
+        Ok(())
+    }
+
+    pub async fn create_region_file(region: &Region) -> GisResult<()> {
+        let geojson_path = temp_dir().join(format!("{}.geojson", region.code()));
+        let gpkg_path = geojson_path.with_extension("gpkg");
+        if geojson_path.exists() {
+            fs::remove_file(&geojson_path).ok();
+        }
+        if gpkg_path.exists() {
+            fs::remove_file(&gpkg_path).ok();
+        }
+
+        Self::create_region_geojson(region.code(), geojson_path.to_str().unwrap())?;
+
+        VectorService::convert_to_gpkg(geojson_path.to_str().unwrap(), gpkg_path.to_str().unwrap())
+            .await?;
+
+        fs::remove_file(&geojson_path).ok();
+
+        Ok(())
     }
 }

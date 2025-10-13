@@ -27,6 +27,7 @@ impl FetchService {
         client: &reqwest::Client,
         url: &str,
         path: &str,
+        file_name: &str,
         progress: &DownloadProgress,
     ) -> DataResult<()> {
         let response = client.get(url).send().await?;
@@ -48,7 +49,11 @@ impl FetchService {
             if last_update.elapsed().as_millis() > 500 {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
                 let downloaded_mb = downloaded as f64 / 1_048_576.0;
-                let speed_mbps = downloaded_mb / elapsed_secs;
+                let speed_mbps = if elapsed_secs > 0.0 {
+                    downloaded_mb / elapsed_secs
+                } else {
+                    0.0
+                };
 
                 if let Some(total) = total_size {
                     let total_mb = total as f64 / 1_048_576.0;
@@ -58,9 +63,16 @@ impl FetchService {
                     } else {
                         0
                     };
-                    progress.download_detail(downloaded_mb, total_mb, speed_mbps, eta_secs);
+
+                    progress.file_progress(
+                        file_name,
+                        downloaded_mb,
+                        total_mb,
+                        speed_mbps,
+                        eta_secs,
+                    );
                 } else {
-                    progress.download_detail(downloaded_mb, 0.0, speed_mbps, 0);
+                    progress.file_progress(file_name, downloaded_mb, 0.0, speed_mbps, 0);
                 }
 
                 last_update = Instant::now();
@@ -148,9 +160,16 @@ impl FetchService {
     /// # Arguments
     /// * `url` - The URL of the data source to fetch.
     /// * `output_path` - The local file path where the data source should be saved.
+    /// * `file_name` - Display name for progress tracking
+    /// * `progress` - Progress tracker instance
     /// # Errors
     /// Returns a `DataError` if the download fails after retries.
-    async fn fetch_data_source(url: &str, output_path: &str) -> DataResult<()> {
+    async fn fetch_data_source(
+        url: &str,
+        output_path: &str,
+        file_name: &str,
+        progress: &DownloadProgress,
+    ) -> DataResult<()> {
         if path_exists_in(cache_dir(), output_path) {
             return Ok(());
         }
@@ -161,9 +180,8 @@ impl FetchService {
             .build()
             .map_err(DataError::Http)?;
 
-        let progress = DownloadProgress::new();
         Self::with_retry(
-            || Self::download_file(&client, url, output_path, &progress),
+            || Self::download_file(&client, url, output_path, file_name, progress),
             3,
         )
         .await
@@ -221,7 +239,6 @@ impl FetchService {
     /// # Errors
     /// Returns a `DataError` if fetching any of the data sources fails.
     pub async fn fetch_data_sources(codes: &[&str]) -> DataResult<()> {
-        let progress = DownloadProgress::new();
         let mut total_files = 0;
         let mut all_downloads = Vec::new();
 
@@ -231,19 +248,18 @@ impl FetchService {
             all_downloads.push((code, dl_sources));
         }
 
-        let mut current_file = 0;
+        let mut progress = DownloadProgress::new(total_files);
+
         for (code, dl_sources) in all_downloads {
             for (storage_name, url) in dl_sources {
-                current_file += 1;
-                progress.status(&format!("Téléchargement: {}_{}.7z", storage_name, code));
-                progress.file_progress(
-                    &format!("{}_{}", storage_name, code),
-                    current_file,
-                    total_files,
-                );
+                let file_name = format!("{}_{}.7z", storage_name, code);
+                progress.start_file(&file_name);
+
                 Self::fetch_data_source(
                     &url,
-                    &format!("{}/{}_{}.7z", cache_dir().display(), storage_name, code),
+                    &format!("{}/{}", cache_dir().display(), file_name),
+                    &file_name,
+                    &progress,
                 )
                 .await?;
             }
@@ -288,7 +304,16 @@ impl FetchService {
             height
         );
 
-        Self::fetch_data_source(&wms_url, output_path.to_str().unwrap()).await?;
+        let mut progress = DownloadProgress::new(1);
+        progress.start_file("Orthophoto");
+
+        Self::fetch_data_source(
+            &wms_url,
+            output_path.to_str().unwrap(),
+            "Orthophoto",
+            &progress,
+        )
+        .await?;
 
         Ok(output_path.to_str().unwrap().to_string())
     }

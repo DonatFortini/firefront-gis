@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::error::{GisError, GisResult};
 use crate::services::data::ArchiveService;
-use crate::services::gis::{LayerService, Overlay, RegionService, VectorService};
+use crate::services::gis::{LayerService, Overlay, VectorService};
 use crate::types::{BoundingBox, Dataset};
 use crate::utils::{LayerProgress, PathBuilder, VulcainColors, clean_tmp, execute_sidecar};
 
@@ -167,12 +167,9 @@ impl ProcessingService {
         code: &str,
         project_bb: &BoundingBox,
     ) -> GisResult<String> {
-        let geojson_path = path_builder.temp_file(code, "geojson");
         let temp_gpkg = path_builder.temp_file(code, "gpkg");
         let output_gpkg = path_builder.temp_file(&format!("{}_region", code), "gpkg");
-
-        RegionService::check_database()?;
-        VectorService::convert_to_gpkg(&geojson_path, &temp_gpkg).await?;
+        println!("Préparation de la couche régionale...");
         VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await?;
 
         Ok(output_gpkg)

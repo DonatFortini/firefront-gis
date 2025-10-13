@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::utils::temp_dir;
 
 pub fn create_directory_if_not_exists(path: &str) -> Result<()> {
     if !Path::new(path).exists() {
-        fs::create_dir_all(path)?;
+        fs::create_dir_all(path).map_err(AppError::Io)?;
     }
     Ok(())
 }
@@ -20,12 +20,12 @@ pub fn clean_tmp(ignore_extension: Option<&str>) -> Result<()> {
 
     match ignore_extension {
         Some(ext) => {
-            for entry in fs::read_dir(&tmp_dir)? {
-                let entry = entry?;
+            for entry in fs::read_dir(&tmp_dir).map_err(AppError::Io)? {
+                let entry = entry.map_err(AppError::Io)?;
                 let path = entry.path();
 
                 if path.is_dir() {
-                    fs::remove_dir_all(&path)?;
+                    fs::remove_dir_all(&path).map_err(AppError::Io)?;
                     continue;
                 }
 
@@ -39,13 +39,13 @@ pub fn clean_tmp(ignore_extension: Option<&str>) -> Result<()> {
                     .unwrap_or(true);
 
                 if should_remove {
-                    fs::remove_file(&path)?;
+                    fs::remove_file(&path).map_err(AppError::Io)?;
                 }
             }
         }
         None => {
-            fs::remove_dir_all(&tmp_dir)?;
-            fs::create_dir(&tmp_dir)?;
+            fs::remove_dir_all(&tmp_dir).map_err(AppError::Io)?;
+            fs::create_dir(&tmp_dir).map_err(AppError::Io)?;
         }
     }
 

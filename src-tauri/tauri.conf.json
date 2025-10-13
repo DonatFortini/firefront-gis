@@ -42,7 +42,8 @@
         "languages": [
           "French"
         ],
-        "displayLanguageSelector": true
+        "installerIcon": "icons/icon.ico",
+        "installMode": "perMachine"
       },
       "signCommand": null,
       "timestampUrl": null,

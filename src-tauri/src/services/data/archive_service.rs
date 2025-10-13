@@ -21,15 +21,6 @@ impl ArchiveService {
         Ok(())
     }
 
-    /// Extrait plusieurs fichiers d'une archive en une seule opération
-    ///
-    /// # Arguments
-    /// * `archive_path` - Chemin vers l'archive
-    /// * `target_filenames` - Liste des noms de fichiers à extraire (sans extension)
-    /// * `output_dir` - Répertoire de destination
-    ///
-    /// # Returns
-    /// HashMap associant chaque nom de fichier à son chemin d'extraction
     pub async fn extract_multiple_files(
         archive_path: &str,
         target_filenames: &[&str],

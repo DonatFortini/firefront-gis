@@ -29,6 +29,24 @@ impl Progress {
         Self::emit(&message);
     }
 
+    pub fn full_with_eta(
+        stage: impl AsRef<str>,
+        substage: impl AsRef<str>,
+        current: usize,
+        total: usize,
+        eta_secs: u64,
+    ) {
+        let message = format!(
+            "{}|{}|{}/{}|{}",
+            stage.as_ref(),
+            substage.as_ref(),
+            current,
+            total,
+            eta_secs
+        );
+        Self::emit(&message);
+    }
+
     fn emit(message: &str) {
         if let Some(handle) = get_handle() {
             let _ = handle.emit("progress-update", message);
@@ -87,38 +105,54 @@ impl ProgressTracker {
     }
 }
 
-#[derive(Default)]
 pub struct DownloadProgress {
     stage: String,
+    current_file: usize,
+    total_files: usize,
 }
 
 impl DownloadProgress {
-    pub fn new() -> Self {
+    pub fn new(total_files: usize) -> Self {
         Self {
             stage: "Téléchargement des données".to_string(),
+            current_file: 0,
+            total_files,
         }
     }
 
-    pub fn file_progress(&self, file_type: &str, current: usize, total: usize) {
-        Progress::full(&self.stage, file_type, current, total);
+    pub fn start_file(&mut self, file_type: &str) {
+        self.current_file += 1;
+        Progress::full(
+            &self.stage,
+            format!("Téléchargement: {}", file_type),
+            self.current_file,
+            self.total_files,
+        );
     }
 
-    pub fn status(&self, message: &str) {
-        Progress::substage(&self.stage, message);
-    }
-
-    pub fn download_detail(
+    pub fn file_progress(
         &self,
+        file_type: &str,
         downloaded_mb: f64,
         total_mb: f64,
         speed_mbps: f64,
         eta_secs: u64,
     ) {
-        let message = format!(
-            " {:.2}/{:.2} MB | {:.2} MB/s | ETA: {}s",
-            downloaded_mb, total_mb, speed_mbps, eta_secs
+        let detail = format!(
+            "{} - {:.2}/{:.2} MB ({:.2} MB/s)",
+            file_type, downloaded_mb, total_mb, speed_mbps
         );
-        Progress::substage(&self.stage, &message);
+        Progress::full_with_eta(
+            &self.stage,
+            &detail,
+            self.current_file,
+            self.total_files,
+            eta_secs,
+        );
+    }
+
+    pub fn status(&self, message: &str) {
+        Progress::substage(&self.stage, message);
     }
 }
 
@@ -141,7 +175,7 @@ impl LayerProgress {
         self.current_layer += 1;
         Progress::full(
             &self.stage,
-            format!("Ajout de {layer_name}"),
+            format!("Ajout de {}", layer_name),
             self.current_layer,
             self.total_layers,
         );

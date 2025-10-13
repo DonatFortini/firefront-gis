@@ -18,6 +18,7 @@ struct ProgressState {
     error: Option<Rc<String>>,
     subtask: Option<Rc<String>>,
     subtask_count: Option<(usize, usize)>,
+    eta: Option<u64>,
 }
 
 impl Default for ProgressState {
@@ -28,6 +29,7 @@ impl Default for ProgressState {
             error: None,
             subtask: None,
             subtask_count: None,
+            eta: None,
         }
     }
 }
@@ -280,19 +282,31 @@ fn status_message(props: &StatusMessageProps) -> Html {
         .subtask {
             color: #999999;
             font-size: 0.95rem;
-            font-style: italic;
             margin: 8px 0;
+        }
+
+        .eta {
+            color: #66b3ff;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin: 12px auto 8px auto;
+            padding: 6px 12px;
+            background-color: rgba(102, 179, 255, 0.1);
+            border-radius: 4px;
+            display: block;
+            width: fit-content;
         }
         
         .subtask-count {
             color: #ff4141;
             font-size: 0.9rem;
             font-weight: 600;
-            margin-top: 8px;
+            margin: 0 auto;
             padding: 8px 16px;
             background-color: rgba(255, 65, 65, 0.1);
             border-radius: 4px;
-            display: inline-block;
+            display: block;
+            width: fit-content;
         }
         "#
     );
@@ -310,6 +324,16 @@ fn status_message(props: &StatusMessageProps) -> Html {
                 html! {}
             }}
 
+            {if let Some(eta) = props.state.eta {
+                html! {
+                    <div class="eta">
+                        {format_eta(eta)}
+                    </div>
+                }
+            } else {
+                html! {}
+            }}
+
             {if let Some((current, total)) = props.state.subtask_count {
                 html! {
                     <div class="subtask-count">
@@ -320,6 +344,20 @@ fn status_message(props: &StatusMessageProps) -> Html {
                 html! {}
             }}
         </div>
+    }
+}
+
+fn format_eta(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("⏱ Temps restant: {}s", seconds)
+    } else if seconds < 3600 {
+        let mins = seconds / 60;
+        let secs = seconds % 60;
+        format!("⏱ Temps restant: {}m {}s", mins, secs)
+    } else {
+        let hours = seconds / 3600;
+        let mins = (seconds % 3600) / 60;
+        format!("⏱ Temps restant: {}h {}m", hours, mins)
     }
 }
 
@@ -359,27 +397,57 @@ fn error_display(props: &ErrorDisplayProps) -> Html {
     }
 }
 
-//TODO: modif
-fn get_progress_percentage(message: &str) -> u8 {
-    match message {
-        "Recherche des fichiers" => 10,
-        "Téléchargement des données" => 25,
-        "Initialisation du projet" => 35,
-        "Préparation des Couches" => 50,
+fn calculate_progress_percentage(
+    message: &str,
+    current: Option<usize>,
+    total: Option<usize>,
+) -> u8 {
+    let base_percentage = match message {
+        "Recherche des régions" => 0,
+        "Téléchargement des données" => 10,
+        "Initialisation du projet" => 25,
+        "Préparation des Couches" => 35,
+        "Traitement de l'élévation" => 50,
+        "Fusion des tuiles d'élévation" => 55,
         "Fusion des données" => 60,
         "Ajout des Couches" => 70,
         "Finalisation" => 85,
         "Nettoyage" => 95,
         "Projet créé avec succès" => 100,
+        _ => return 0,
+    };
+
+    let range = match message {
+        "Recherche des régions" => 10,
+        "Téléchargement des données" => 15,
+        "Initialisation du projet" => 10,
+        "Préparation des Couches" => 15,
+        "Traitement de l'élévation" => 5,
+        "Fusion des tuiles d'élévation" => 5,
+        "Fusion des données" => 10,
+        "Ajout des Couches" => 15,
+        "Finalisation" => 10,
+        "Nettoyage" => 5,
         _ => 0,
+    };
+
+    if let (Some(curr), Some(tot)) = (current, total)
+        && tot > 0
+    {
+        let step_progress = (range as f64 * curr as f64 / tot as f64) as u8;
+        return (base_percentage + step_progress).min(100);
     }
+
+    base_percentage
 }
 
-fn parse_progress_message(payload: &str) -> (String, Option<String>, Option<(usize, usize)>) {
+type ProgressMessageParts = (String, Option<String>, Option<(usize, usize)>, Option<u64>);
+
+fn parse_progress_message(payload: &str) -> ProgressMessageParts {
     let parts: Vec<&str> = payload.split('|').collect();
     let main_message = parts.first().map_or("", |s| *s).to_string();
 
-    let subtask = if parts.len() > 1 {
+    let subtask = if parts.len() > 1 && !parts[1].is_empty() {
         Some(parts[1].to_string())
     } else {
         None
@@ -401,7 +469,13 @@ fn parse_progress_message(payload: &str) -> (String, Option<String>, Option<(usi
         None
     };
 
-    (main_message, subtask, count)
+    let eta = if parts.len() > 3 {
+        parts[3].parse::<u64>().ok()
+    } else {
+        None
+    };
+
+    (main_message, subtask, count, eta)
 }
 
 fn setup_progress_tracking(
@@ -413,9 +487,23 @@ fn setup_progress_tracking(
     let project_name_clone = project_name.clone();
     let navigator_clone = navigator.clone();
 
+    let max_percentage = Rc::new(std::cell::Cell::new(0u8));
+    let max_percentage_clone = max_percentage.clone();
+
     let closure = Closure::<dyn FnMut(String)>::new(move |payload: String| {
-        let (main_message, subtask, count) = parse_progress_message(&payload);
-        let percentage = get_progress_percentage(&main_message);
+        let (main_message, subtask, count, eta) = parse_progress_message(&payload);
+        let mut percentage = calculate_progress_percentage(
+            &main_message,
+            count.map(|(c, _)| c),
+            count.map(|(_, t)| t),
+        );
+
+        let current_max = max_percentage_clone.get();
+        if percentage < current_max {
+            percentage = current_max;
+        } else {
+            max_percentage_clone.set(percentage);
+        }
 
         web_sys::console::log_1(&format!("Progress update: {}", payload).into());
 
@@ -425,6 +513,7 @@ fn setup_progress_tracking(
             error: None,
             subtask: subtask.map(Rc::new),
             subtask_count: count,
+            eta,
         });
 
         if main_message == "Projet créé avec succès" {

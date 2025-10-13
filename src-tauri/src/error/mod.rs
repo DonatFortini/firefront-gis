@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
     #[error("Configuration error: {0}")]
     Config(#[from] ConfigError),
     #[error("Data service error: {0}")]
@@ -101,6 +101,10 @@ pub enum GisError {
     ImageProcessing(String),
     #[error("Region not found: {0}")]
     NotFound(String),
+    #[error("Database error: {0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]
@@ -151,11 +155,5 @@ impl From<std::io::Error> for ProjectError {
 impl From<std::io::Error> for DataError {
     fn from(err: std::io::Error) -> Self {
         DataError::ExtractionFailed(err.to_string())
-    }
-}
-
-impl From<std::io::Error> for GisError {
-    fn from(err: std::io::Error) -> Self {
-        GisError::Dataset(err.to_string())
     }
 }
