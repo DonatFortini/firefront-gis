@@ -386,9 +386,159 @@ struct MapContainerProps {
     project_name: String,
 }
 
+#[derive(Clone)]
+struct ViewState {
+    zoom: f64,
+    pan_x: f64,
+    pan_y: f64,
+    initial_zoom: f64,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+            initial_zoom: 1.0,
+        }
+    }
+}
+
 #[styled_component(MapContainer)]
 fn map_container(props: &MapContainerProps) -> Html {
-    let style = css!(
+    let view_state = use_state(ViewState::default);
+    let is_dragging = use_state(|| false);
+    let drag_start = use_state(|| (0.0, 0.0));
+    let container_ref = use_node_ref();
+    let image_ref = use_node_ref();
+
+    {
+        let view_state = view_state.clone();
+        let container_ref = container_ref.clone();
+        let image_ref = image_ref.clone();
+        let loading_state = props.loading_state.clone();
+
+        use_effect_with((loading_state.clone(),), move |_| {
+            if matches!(loading_state, LoadingState::Loaded(_)) {
+                gloo_timers::callback::Timeout::new(100, move || {
+                    if let (Some(container), Some(img)) = (
+                        container_ref.cast::<web_sys::HtmlElement>(),
+                        image_ref.cast::<web_sys::HtmlImageElement>(),
+                    ) {
+                        let container_width = container.client_width() as f64;
+                        let container_height = container.client_height() as f64;
+                        let img_width = img.natural_width() as f64;
+                        let img_height = img.natural_height() as f64;
+
+                        if img_width > 0.0 && img_height > 0.0 {
+                            let scale_x = container_width / img_width;
+                            let scale_y = container_height / img_height;
+                            let initial_zoom = scale_x.min(scale_y) * 0.95;
+
+                            let mut new_state = (*view_state).clone();
+                            new_state.zoom = initial_zoom;
+                            new_state.initial_zoom = initial_zoom;
+                            new_state.pan_x = 0.0;
+                            new_state.pan_y = 0.0;
+                            view_state.set(new_state);
+                        }
+                    }
+                })
+                .forget();
+            }
+            || ()
+        });
+    }
+
+    let on_wheel = {
+        let view_state = view_state.clone();
+        Callback::from(move |e: WheelEvent| {
+            e.prevent_default();
+
+            let delta = if e.delta_y() > 0.0 { -0.1 } else { 0.1 };
+            let mut new_state = (*view_state).clone();
+            new_state.zoom = (new_state.zoom + delta).clamp(0.1, 5.0);
+            view_state.set(new_state);
+        })
+    };
+
+    let on_mouse_down = {
+        let is_dragging = is_dragging.clone();
+        let drag_start = drag_start.clone();
+        Callback::from(move |e: MouseEvent| {
+            e.prevent_default();
+            is_dragging.set(true);
+            drag_start.set((e.client_x() as f64, e.client_y() as f64));
+        })
+    };
+
+    let on_mouse_move = {
+        let is_dragging = is_dragging.clone();
+        let drag_start = drag_start.clone();
+        let view_state = view_state.clone();
+        Callback::from(move |e: MouseEvent| {
+            if *is_dragging {
+                e.prevent_default();
+                let (start_x, start_y) = *drag_start;
+                let dx = e.client_x() as f64 - start_x;
+                let dy = e.client_y() as f64 - start_y;
+
+                let mut new_state = (*view_state).clone();
+                new_state.pan_x += dx;
+                new_state.pan_y += dy;
+                view_state.set(new_state);
+
+                drag_start.set((e.client_x() as f64, e.client_y() as f64));
+            }
+        })
+    };
+
+    let on_mouse_up = {
+        let is_dragging = is_dragging.clone();
+        Callback::from(move |e: MouseEvent| {
+            e.prevent_default();
+            is_dragging.set(false);
+        })
+    };
+
+    let on_mouse_leave = {
+        let is_dragging = is_dragging.clone();
+        Callback::from(move |_: MouseEvent| {
+            is_dragging.set(false);
+        })
+    };
+
+    let on_double_click = {
+        let view_state = view_state.clone();
+        Callback::from(move |_: MouseEvent| {
+            let mut new_state = (*view_state).clone();
+            new_state.zoom = new_state.initial_zoom;
+            new_state.pan_x = 0.0;
+            new_state.pan_y = 0.0;
+            view_state.set(new_state);
+        })
+    };
+
+    let on_zoom_in = {
+        let view_state = view_state.clone();
+        Callback::from(move |_: MouseEvent| {
+            let mut new_state = (*view_state).clone();
+            new_state.zoom = (new_state.zoom + 0.2).min(5.0);
+            view_state.set(new_state);
+        })
+    };
+
+    let on_zoom_out = {
+        let view_state = view_state.clone();
+        Callback::from(move |_: MouseEvent| {
+            let mut new_state = (*view_state).clone();
+            new_state.zoom = (new_state.zoom - 0.2).max(0.1);
+            view_state.set(new_state);
+        })
+    };
+
+    let container_style = css!(
         r#"
         flex: 1;
         background: linear-gradient(135deg, #242424 0%, #1c1c1c 100%);
@@ -397,25 +547,157 @@ fn map_container(props: &MapContainerProps) -> Html {
         border: 1px solid rgba(255, 255, 255, 0.1);
         overflow: hidden;
         position: relative;
+        cursor: grab;
+        
+        &:active {
+            cursor: grabbing;
+        }
+        
+        .image-wrapper {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
         
         img {
-            width: 100% !important;
-            height: 100% !important;
-            object-fit: contain !important;
-            display: block !important;
+            max-width: none;
+            max-height: none;
+            display: block;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
+        }
+        
+        .controls {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 10;
+        }
+        
+        .control-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(36, 36, 36, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-btn:hover {
+            background: rgba(255, 65, 65, 0.9);
+            border-color: #ff4141;
+            transform: scale(1.1);
+        }
+        
+        .zoom-indicator {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            padding: 8px 12px;
+            background: rgba(36, 36, 36, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #ffffff;
+            font-size: 0.9rem;
+            font-weight: 600;
+            font-family: 'Fira Code', monospace;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+        
+        .hint {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            padding: 8px 12px;
+            background: rgba(36, 36, 36, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #cccccc;
+            font-size: 0.85rem;
+            backdrop-filter: blur(10px);
+            z-index: 10;
         }
         "#
     );
 
+    let transform_style = format!(
+        "transform: scale({}) translate({}px, {}px);",
+        view_state.zoom,
+        view_state.pan_x / view_state.zoom,
+        view_state.pan_y / view_state.zoom
+    );
+
+    let zoom_percentage = if view_state.initial_zoom > 0.0 {
+        ((view_state.zoom / view_state.initial_zoom) * 100.0) as i32
+    } else {
+        100
+    };
+
     html! {
-        <div class={style}>
+        <div class={container_style} ref={container_ref.clone()}>
             {match &props.loading_state {
                 LoadingState::Loading => html! { <LoadingIndicator /> },
                 LoadingState::Loaded(src) => html! {
-                    <img
-                        src={(**src).clone()}
-                        alt={format!("Carte de {}", props.project_name)}
-                    />
+                    <>
+                        <div class="controls">
+                            <button
+                                class="control-btn"
+                                onclick={on_zoom_in}
+                                title="Zoom avant"
+                            >
+                                {"➕"}
+                            </button>
+                            <button
+                                class="control-btn"
+                                onclick={on_zoom_out}
+                                title="Zoom arrière"
+                            >
+                                {"➖"}
+                            </button>
+                        </div>
+
+                        <div class="zoom-indicator">
+                            {format!("{}%", zoom_percentage)}
+                        </div>
+
+                        <div class="hint">
+                            {"🖱️ Molette: Zoom | Glisser: Déplacer | Double-clic: Réinitialiser"}
+                        </div>
+
+                        <div
+                            class="image-wrapper"
+                            onwheel={on_wheel}
+                            onmousedown={on_mouse_down}
+                            onmousemove={on_mouse_move}
+                            onmouseup={on_mouse_up}
+                            onmouseleave={on_mouse_leave}
+                            ondblclick={on_double_click}
+                        >
+                            <img
+                                ref={image_ref}
+                                src={(**src).clone()}
+                                alt={format!("Carte de {}", props.project_name)}
+                                style={transform_style}
+                            />
+                        </div>
+                    </>
                 },
                 LoadingState::Error => html! { <ErrorIndicator /> },
             }}
