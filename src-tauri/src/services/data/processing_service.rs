@@ -15,6 +15,22 @@ struct LayerConfig {
 }
 
 impl LayerConfig {
+    fn get_where_clause(file_name: &str) -> Option<String> {
+        match file_name {
+            "TRONCON_DE_ROUTE" => Some(
+                "NATURE IN (\
+                        'Escalier', \
+                        'Rond-point', \
+                        'Route à 1 chaussée', \
+                        'Route à 2 chaussées', \
+                        'Route empierrée', \
+                    )"
+                .to_string(),
+            ),
+            _ => None,
+        }
+    }
+
     fn get_configs() -> Vec<Self> {
         vec![
             Self {
@@ -45,7 +61,6 @@ impl LayerConfig {
                     "PLAN_D_EAU",
                     "SURFACE_HYDROGRAPHIQUE",
                     "TRONCON_DE_ROUTE",
-                    "VOIE_NOMMEE",
                 ],
                 order: 3,
             },
@@ -170,7 +185,7 @@ impl ProcessingService {
         let temp_gpkg = path_builder.temp_file(code, "gpkg");
         let output_gpkg = path_builder.temp_file(&format!("{}_region", code), "gpkg");
         println!("Préparation de la couche régionale...");
-        VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await?;
+        VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb, None).await?;
 
         Ok(output_gpkg)
     }
@@ -200,7 +215,14 @@ impl ProcessingService {
         };
 
         let output_gpkg = path_builder.temp_file(&format!("{}_{}", code, file_name), "gpkg");
-        VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb).await?;
+        let where_clause = LayerConfig::get_where_clause(file_name);
+        VectorService::clip_to_bb(
+            &temp_gpkg,
+            &output_gpkg,
+            project_bb,
+            where_clause.as_deref(),
+        )
+        .await?;
 
         Ok(output_gpkg)
     }

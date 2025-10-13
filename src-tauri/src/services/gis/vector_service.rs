@@ -73,21 +73,27 @@ impl VectorService {
         input_gpkg: &str,
         output_gpkg: &str,
         project_bb: &BoundingBox,
+        where_clause: Option<&str>,
     ) -> GisResult<()> {
         let current_dir = std::env::current_dir()?;
         let input_path = current_dir.join(input_gpkg);
         let output_path = current_dir.join(output_gpkg);
 
-        let args = [
+        let xmin = project_bb.xmin.to_string();
+        let ymin = project_bb.ymin.to_string();
+        let xmax = project_bb.xmax.to_string();
+        let ymax = project_bb.ymax.to_string();
+
+        let mut args = vec![
             "-f",
             "GPKG",
             output_path.to_str().unwrap(),
             input_path.to_str().unwrap(),
             "-clipsrc",
-            &project_bb.xmin.to_string(),
-            &project_bb.ymin.to_string(),
-            &project_bb.xmax.to_string(),
-            &project_bb.ymax.to_string(),
+            &xmin,
+            &ymin,
+            &xmax,
+            &ymax,
             "-nlt",
             "PROMOTE_TO_MULTI",
             "--config",
@@ -101,6 +107,10 @@ impl VectorService {
             "OGR_GEOMETRY_CORRECT_UNCLOSED_RINGS",
             "YES",
         ];
+
+        if let Some(clause) = where_clause {
+            args.extend(&["-where", clause]);
+        }
 
         execute_sidecar("ogr2ogr", &args)
             .await
