@@ -3,28 +3,23 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
-    inputs:
-      platform:
-        description: "Platform to build"
-        required: true
-        default: "all"
-        type: choice
-        options:
-          - all
-          - windows
-          - macos
-          - linux
 
 jobs:
-  # macOS job
-  release-macos:
-    if: |
-      github.event_name == 'push' || 
-      github.event.inputs.platform == 'all' || 
-      github.event.inputs.platform == 'macos'
+  release:
     permissions:
       contents: write
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: ""
+          - platform: "windows-latest"
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,51 +27,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,wasm32-unknown-unknown
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Install Trunk
-        uses: jetli/trunk-action@v0.4.0
-        with:
-          version: "latest"
-
-      - name: Build frontend with Trunk
-        run: trunk build --release
-
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: v__VERSION__
-          releaseName: "Firefront GIS v__VERSION__"
-          releaseBody: "Téléchargez et installez la dernière version de Firefront GIS. Choisissez le fichier approprié pour votre système d'exploitation."
-          releaseDraft: false
-          args: --target aarch64-apple-darwin
-
-  # Linux job
-  release-linux:
-    if: |
-      github.event_name == 'push' || 
-      github.event.inputs.platform == 'all' || 
-      github.event.inputs.platform == 'linux'
-    permissions:
-      contents: write
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -89,11 +40,11 @@ jobs:
           version: "latest"
 
       - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 libgtk-3-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libssl-dev file
 
       - name: Build frontend with Trunk
         run: trunk build --release
-
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -105,48 +56,4 @@ jobs:
           releaseName: "Firefront GIS v__VERSION__"
           releaseBody: "Téléchargez et installez la dernière version de Firefront GIS. Choisissez le fichier approprié pour votre système d'exploitation."
           releaseDraft: false
-          args: --bundles deb,rpm
-
-  # Windows job
-  release-windows:
-    if: |
-      github.event_name == 'push' || 
-      github.event.inputs.platform == 'all' || 
-      github.event.inputs.platform == 'windows'
-    permissions:
-      contents: write
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Install Trunk
-        uses: jetli/trunk-action@v0.4.0
-        with:
-          version: "latest"
-
-      - name: Build frontend with Trunk
-        run: trunk build --release
-
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: v__VERSION__
-          releaseName: "Firefront GIS v__VERSION__"
-          releaseBody: "Téléchargez et installez la dernière version de Firefront GIS. Choisissez le fichier approprié pour votre système d'exploitation."
-          releaseDraft: false
-          args: ""
+          args: ${{ matrix.platform == 'ubuntu-22.04' && '--bundles deb,rpm' || matrix.args }}

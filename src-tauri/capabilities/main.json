@@ -7,20 +7,10 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-close",
-    "core:window:allow-center",
-    "core:window:allow-set-focus",
-    "core:window:allow-set-title",
-    "core:app:allow-version",
-    "core:app:allow-name",
-    "core:path:default",
-    "core:event:default",
-    "core:event:allow-listen",
-    "core:event:allow-unlisten",
-    "core:event:allow-emit",
-    "core:event:allow-emit-to",
+    "shell:allow-open",
     "dialog:allow-open",
-    "dialog:allow-message",
+    "dialog:default",
+    "shell:default",
     {
       "identifier": "shell:allow-execute",
       "allow": [
