@@ -33,14 +33,7 @@
       }
     ],
     "security": {
-      "csp": {
-        "default-src": "'self' tauri:",
-        "connect-src": "'self' https://geoservices.ign.fr https://data.geopf.fr https://github.com ipc: http://ipc.localhost tauri:",
-        "script-src": "'self' 'wasm-unsafe-eval' 'unsafe-inline'",
-        "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' asset: https: tauri: data:",
-        "font-src": "'self' data:"
-      },
+      "csp": null,
       "freezePrototype": true,
       "dangerousDisableAssetCspModification": false,
       "assetProtocol": {
