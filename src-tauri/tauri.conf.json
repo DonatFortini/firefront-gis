@@ -40,7 +40,9 @@
         "enable": true,
         "scope": {
           "allow": [
-            "$APPDATA/**"
+            "$APPDATA/**",
+            "$APPDATA/projects/**",
+            "$APPDATA/cache/wms/**"
           ]
         }
       },
