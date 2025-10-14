@@ -15,6 +15,10 @@
     "core:app:allow-name",
     "core:path:default",
     "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to",
     "dialog:allow-open",
     "dialog:allow-message",
     {
