@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
@@ -50,4 +51,69 @@ pub fn clean_tmp(ignore_extension: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Serialize)]
+pub struct CacheFileInfo {
+    pub name: String,
+    pub size: u64,
+    pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct CacheInfo {
+    pub total_size: u64,
+    pub file_count: usize,
+    pub files: Vec<CacheFileInfo>,
+}
+
+pub fn get_dir_size_and_files(dir: &Path) -> Result<(u64, Vec<CacheFileInfo>)> {
+    let mut total_size = 0u64;
+    let mut files = Vec::new();
+
+    if !dir.exists() {
+        return Ok((0, files));
+    }
+
+    fn visit_dirs(
+        dir: &Path,
+        total_size: &mut u64,
+        files: &mut Vec<CacheFileInfo>,
+        base_path: &Path,
+    ) -> Result<()> {
+        if dir.is_dir() {
+            for entry in fs::read_dir(dir).map_err(AppError::Io)? {
+                let entry = entry.map_err(AppError::Io)?;
+                let path = entry.path();
+
+                if path.is_dir() {
+                    visit_dirs(&path, total_size, files, base_path)?;
+                } else if path.is_file() {
+                    let metadata = fs::metadata(&path).map_err(AppError::Io)?;
+                    let size = metadata.len();
+                    *total_size += size;
+
+                    let relative_path = path
+                        .strip_prefix(base_path)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .to_string();
+
+                    files.push(CacheFileInfo {
+                        name: path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                        size,
+                        path: relative_path,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    visit_dirs(dir, &mut total_size, &mut files, dir)?;
+    Ok((total_size, files))
 }

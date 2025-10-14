@@ -5,7 +5,8 @@ use tokio::fs;
 
 use crate::error::{GisError, GisResult, ProjectError, ProjectResult};
 use crate::services::{
-    ArchiveService, FetchService, ProcessingService, RasterService, RegionService, VectorService,
+    ArchiveService, ElevationService, FetchService, ProcessingService, RasterService,
+    RegionService, VectorService,
 };
 use crate::types::BoundingBox;
 use crate::types::regions::find_intersecting_regions;
@@ -102,7 +103,6 @@ impl ProjectService {
         }
 
         tokio::fs::remove_dir_all(&project_folder).await?;
-        println!("Project '{}' deleted successfully", name);
         Ok(())
     }
 
@@ -117,8 +117,6 @@ impl ProjectService {
 
         let slice_factor_value = slice_factor();
         let output_dir = output_location();
-
-        println!("Exporting project: {}", name);
 
         RasterService::slice_project(name, slice_factor_value)
             .await
@@ -186,95 +184,47 @@ impl ProjectService {
         project_bb: &BoundingBox,
         project_folder: &str,
     ) -> ProjectResult<()> {
-        use crate::services::ElevationService;
-
         Progress::status("Traitement de l'élévation");
 
         let elevation_output = format!("{}/resources/elevation.tif", project_folder);
-
-        let mut elevation_tiles = Vec::new();
+        let mut all_asc_files = Vec::new();
 
         for (idx, code) in region_codes.iter().enumerate() {
             Progress::full(
-                "Traitement de l'élévation",
+                "Extraction des tuiles d'élévation",
                 format!("Région {}", code),
                 idx + 1,
                 region_codes.len(),
             );
 
-            let temp_elevation = format!("{}/elevation_{}.tif", temp_dir().display(), code);
+            let asc_files = ElevationService::extract_and_filter_tiles(project_bb, code)
+                .await
+                .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
-            ElevationService::process_elevation_tiles(
-                project_bb,
-                code,
-                &temp_elevation,
-                project_folder,
-            )
+            all_asc_files.extend(asc_files);
+        }
+
+        Progress::status("Fusion des données d'élévation");
+        let unified_vrt = format!("{}/elevation_unified.vrt", temp_dir().display());
+        ElevationService::create_vrt(&all_asc_files, &unified_vrt)
+            .await
+            .map_err(|e| {
+                ProjectError::CreationFailed(format!("Échec de la création du VRT unifié: {}", e))
+            })?;
+
+        Progress::status("Découpage à la zone projet");
+        ElevationService::warp_to_project(&unified_vrt, &elevation_output, project_bb)
             .await
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
-            elevation_tiles.push(temp_elevation);
-        }
-
-        if elevation_tiles.len() > 1 {
-            Progress::status("Fusion des tuiles d'élévation");
-            Self::merge_elevation_tiles(&elevation_tiles, &elevation_output).await?;
-
-            for tile in &elevation_tiles {
-                tokio::fs::remove_file(tile).await.ok();
-            }
-
-            Self::update_color_ramp_after_merge(&elevation_output, project_folder).await?;
-        } else if !elevation_tiles.is_empty() {
-            tokio::fs::rename(&elevation_tiles[0], &elevation_output).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn update_color_ramp_after_merge(
-        elevation_path: &str,
-        project_folder: &str,
-    ) -> ProjectResult<()> {
-        use crate::services::ElevationService;
-
-        let (min_elev, max_elev) = ElevationService::get_elevation_range(elevation_path)
+        Progress::status("Génération de la palette de couleurs");
+        let (min_elev, max_elev) = ElevationService::get_elevation_range(&elevation_output)
             .await
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
-
         ElevationService::create_color_ramp(project_folder, min_elev, max_elev)
             .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
 
-        Ok(())
-    }
-
-    async fn merge_elevation_tiles(tiles: &[String], output: &str) -> ProjectResult<()> {
-        let vrt_path = format!("{}/merged_elevation.vrt", temp_dir().display());
-
-        let mut args = vec!["-overwrite", &vrt_path];
-        args.extend(tiles.iter().map(|s| s.as_str()));
-
-        execute_sidecar("gdalbuildvrt", &args)
-            .await
-            .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
-
-        execute_sidecar(
-            "gdal_translate",
-            &[
-                "-of",
-                "GTiff",
-                "-co",
-                "COMPRESS=LZW",
-                "-co",
-                "TILED=YES",
-                &vrt_path,
-                output,
-            ],
-        )
-        .await
-        .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;
-
-        tokio::fs::remove_file(&vrt_path).await.ok();
+        tokio::fs::remove_file(&unified_vrt).await.ok();
 
         Ok(())
     }
@@ -348,7 +298,6 @@ impl ProjectService {
                 region_codes.len(),
             );
 
-            //TODO : enlever sentier de randonnée
             let (r, v, rp, t) = ProcessingService::prepare_layers(project_bb, code)
                 .await
                 .map_err(|e| ProjectError::CreationFailed(e.to_string()))?;

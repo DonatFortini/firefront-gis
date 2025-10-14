@@ -17,7 +17,6 @@ impl ArchiveService {
             .await
             .map_err(|e| DataError::ExtractionFailed(e.to_string()))?;
 
-        println!("Successfully compressed '{source_folder}' to '{output_path}'");
         Ok(())
     }
 
@@ -51,7 +50,6 @@ impl ArchiveService {
             Self::find_files_recursive(&temp_extract_dir, target_filename, &mut found_files)?;
 
             if found_files.is_empty() {
-                println!("Warning: No files found for '{}'", target_filename);
                 continue;
             }
 

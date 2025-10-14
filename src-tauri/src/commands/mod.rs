@@ -5,7 +5,8 @@ use crate::config::get_config;
 use crate::services::{ProjectService, RegionService};
 use crate::types::BoundingBox;
 use crate::utils::{
-    cache_dir, create_directory_if_not_exists, get_operating_system, wms_cache_dir,
+    CacheInfo, cache_dir, create_directory_if_not_exists, get_dir_size_and_files,
+    get_operating_system, wms_cache_dir,
 };
 
 #[command]
@@ -69,6 +70,22 @@ pub fn save_settings(output_location: Option<String>) -> String {
 }
 
 #[command]
+pub fn get_cache_info() -> Result<CacheInfo, String> {
+    let cache_path = cache_dir();
+
+    let (total_size, mut files) = get_dir_size_and_files(&cache_path)
+        .map_err(|e| format!("Erreur lors de la lecture du cache: {}", e))?;
+
+    files.sort_by(|a, b| b.size.cmp(&a.size));
+
+    Ok(CacheInfo {
+        total_size,
+        file_count: files.len(),
+        files,
+    })
+}
+
+#[command]
 pub fn clear_cache() -> Result<String, String> {
     let cache_path = cache_dir();
 
@@ -89,6 +106,14 @@ pub fn check_regions_database() -> Result<bool, String> {
 #[command]
 pub fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[command]
+pub async fn check_for_updates_manual(app: tauri::AppHandle) -> Result<String, String> {
+    crate::check_for_updates(app)
+        .await
+        .map(|_| "success".to_string())
+        .map_err(|e| e.to_string())
 }
 
 pub mod prelude {

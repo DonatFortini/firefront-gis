@@ -106,9 +106,9 @@ impl ProgressTracker {
 }
 
 pub struct DownloadProgress {
-    stage: String,
-    current_file: usize,
-    total_files: usize,
+    pub(crate) stage: String,
+    pub(crate) current_file: usize,
+    pub(crate) total_files: usize,
 }
 
 impl DownloadProgress {

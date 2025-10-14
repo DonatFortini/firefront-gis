@@ -1,16 +1,11 @@
 [package]
 name = "firefront-gis"
-version = "0.2.2"
+version = "0.3.0"
 description = "GIS application for Firefighters"
 authors = ["Donat Fortini"]
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "firefront_gis_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -18,30 +13,40 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-lazy_static = "1"
-reqwest = { version = "0.12.15", features = ["stream"] }
-tokio = { version = "1.44", features = ["full"] }
-scraper = "0.24.0"
-futures-util = "0.3.31"
-tauri-plugin-dialog = "2"
-tauri-plugin-shell = "2"
-image = "0.25.6"
+chrono = "0.4.40"
 directories = "6.0.0"
 edit-distance = "2.1.3"
-chrono = "0.4.40"
-regex = "1.11.1"
-geojson = "0.24.2"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
-thiserror = "2.0.15"
+futures-util = "0.3.31"
 geo = "0.31.0"
 geo-types = "0.7.17"
-shapefile = "0.7.0"
+geojson = "0.24.2"
 geozero = "0.14.0"
-wkt = "0.14.0"
+image = { version = "0.25.6", default-features = false, features = [
+    "jpeg",
+    "png",
+    "tiff",
+] }
+lazy_static = "1"
+regex = "1.11.1"
+reqwest = { version = "0.12.24", features = ["stream", "hickory-dns"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+scraper = "0.24.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shapefile = "0.7.0"
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+thiserror = "2.0.15"
 tiff = "0.10.3"
+tokio = { version = "1.44", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "fs",
+    "process",
+    "io-util",
+] }
+wkt = "0.14.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

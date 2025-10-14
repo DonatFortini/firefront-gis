@@ -28,7 +28,6 @@ impl ElevationService {
         }
         std::fs::create_dir_all(&extract_dir)?;
 
-        println!("Extracting RGEALTI archive for code {}...", code);
         ArchiveService::extract_all(
             archive_path.to_str().unwrap(),
             extract_dir.to_str().unwrap(),
@@ -45,8 +44,6 @@ impl ElevationService {
             ));
         }
 
-        println!("Found {} total elevation tiles", all_tiles.len());
-
         let intersecting_tiles = Self::filter_intersecting_tiles(&all_tiles, project_bb)?;
 
         if intersecting_tiles.is_empty() {
@@ -56,11 +53,10 @@ impl ElevationService {
             ));
         }
 
-        println!(
-            "Found {} intersecting tiles for processing",
-            intersecting_tiles.len()
-        );
-        let vrt_path = temp_dir().join(format!("elevation_{}.vrt", code));
+        let vrt_path = temp_dir()
+            .join(format!("elevation_{code}.vrt"))
+            .to_string_lossy()
+            .into_owned();
         Self::create_vrt(&intersecting_tiles, &vrt_path).await?;
         Self::warp_to_project(&vrt_path, output_path, project_bb).await?;
 
@@ -69,8 +65,6 @@ impl ElevationService {
 
         std::fs::remove_file(&vrt_path).ok();
         std::fs::remove_dir_all(&extract_dir).ok();
-
-        println!("Elevation processing complete for code {}", code);
 
         Ok(())
     }
@@ -97,7 +91,6 @@ impl ElevationService {
                 .as_f64()
                 .ok_or_else(|| GisError::Dataset("No maximum value found".to_string()))?;
 
-            println!("Elevation range: {:.2}m to {:.2}m", min, max);
             Ok((min, max))
         } else {
             Err(GisError::Dataset("No band information found".to_string()))
@@ -121,7 +114,6 @@ impl ElevationService {
         );
 
         std::fs::write(&color_ramp_path, color_ramp)?;
-        println!("Color ramp created at: {}", color_ramp_path);
 
         Ok(())
     }
@@ -197,9 +189,9 @@ impl ElevationService {
         Ok(intersecting)
     }
 
-    async fn create_vrt(input_files: &[String], output_vrt: &Path) -> GisResult<()> {
+    pub async fn create_vrt(input_files: &[String], output_vrt: &str) -> GisResult<()> {
         let mut args = vec!["-overwrite"];
-        args.push(output_vrt.to_str().unwrap());
+        args.push(output_vrt);
         args.extend(input_files.iter().map(|s| s.as_str()));
 
         execute_sidecar("gdalbuildvrt", &args)
@@ -212,8 +204,8 @@ impl ElevationService {
         Ok(())
     }
 
-    async fn warp_to_project(
-        vrt_path: &Path,
+    pub async fn warp_to_project(
+        vrt_path: &str,
         output_path: &str,
         bbox: &BoundingBox,
     ) -> GisResult<()> {
@@ -238,7 +230,7 @@ impl ElevationService {
                 "TILED=YES",
                 "-of",
                 "GTiff",
-                vrt_path.to_str().unwrap(),
+                vrt_path,
                 output_path,
             ],
         )
@@ -249,5 +241,30 @@ impl ElevationService {
         })?;
 
         Ok(())
+    }
+
+    pub async fn extract_and_filter_tiles(
+        project_bb: &BoundingBox,
+        code: &str,
+    ) -> GisResult<Vec<String>> {
+        let archive_path = cache_dir().join(format!("RGEALTI_{}.7z", code));
+        let extract_dir = temp_dir().join(format!("rgealti_{}", code));
+
+        if extract_dir.exists() {
+            std::fs::remove_dir_all(&extract_dir).ok();
+        }
+        std::fs::create_dir_all(&extract_dir)?;
+
+        ArchiveService::extract_all(
+            archive_path.to_str().unwrap(),
+            extract_dir.to_str().unwrap(),
+        )
+        .await
+        .map_err(|e| GisError::Dataset(format!("Failed to extract RGEALTI: {}", e)))?;
+
+        let all_tiles = Self::find_all_asc_files(&extract_dir)?;
+        let intersecting_tiles = Self::filter_intersecting_tiles(&all_tiles, project_bb)?;
+
+        Ok(intersecting_tiles)
     }
 }

@@ -142,11 +142,16 @@ impl ProcessingService {
         let mut all_extracted_files = HashMap::new();
 
         for config in LayerConfig::get_configs() {
+            let archive_code = if config.archive_name == "RPG" {
+                crate::utils::get_rpg_for_dep_code(code).unwrap_or(code)
+            } else {
+                code
+            };
+
             let archive_path =
-                path_builder.cache_file(&format!("{}_{}.7z", config.archive_name, code));
+                path_builder.cache_file(&format!("{}_{}.7z", config.archive_name, archive_code));
 
             if !Path::new(&archive_path).exists() {
-                println!("Archive non trouvée: {}", archive_path);
                 continue;
             }
 
@@ -165,11 +170,11 @@ impl ProcessingService {
                         all_extracted_files.insert(key, file_path);
                     }
                 }
-                Err(e) => {
-                    println!(
-                        "Erreur lors de l'extraction de {}: {}",
-                        config.archive_name, e
-                    );
+                Err(_e) => {
+                    return Err(GisError::Dataset(format!(
+                        "Échec de l'extraction de l'archive {}",
+                        archive_path
+                    )));
                 }
             }
         }
@@ -184,7 +189,6 @@ impl ProcessingService {
     ) -> GisResult<String> {
         let temp_gpkg = path_builder.temp_file(code, "gpkg");
         let output_gpkg = path_builder.temp_file(&format!("{}_region", code), "gpkg");
-        println!("Préparation de la couche régionale...");
         VectorService::clip_to_bb(&temp_gpkg, &output_gpkg, project_bb, None).await?;
 
         Ok(output_gpkg)
@@ -318,7 +322,7 @@ impl ProcessingService {
         .await
         .map_err(|e| GisError::Dataset(e.to_string()))?;
 
-        let mut corrupted = false;
+        let mut _corrupted = false;
         for line in stdout.lines() {
             if let Some(start) = line.find('(')
                 && let Some(end) = line[start..].find(')')
@@ -332,17 +336,11 @@ impl ProcessingService {
                         rgb_parts[2].trim(),
                     ];
                     if !VulcainColors.values().any(|c| c == &rgb) {
-                        corrupted = true;
+                        _corrupted = true;
                         break;
                     }
                 }
             }
-        }
-
-        if corrupted {
-            println!("Warning: some colors are not in VulcainColors");
-        } else {
-            println!("All layer colors are valid");
         }
 
         Ok(())
