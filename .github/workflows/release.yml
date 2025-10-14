@@ -3,6 +3,17 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
 
 jobs:
   release:
@@ -14,12 +25,21 @@ jobs:
         include:
           - platform: "macos-latest"
             args: "--target aarch64-apple-darwin"
+            name: "macos"
           - platform: "ubuntu-22.04"
             args: ""
+            name: "linux"
           - platform: "windows-latest"
             args: ""
+            name: "windows"
 
     runs-on: ${{ matrix.platform }}
+
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.platform == 'all' || 
+      github.event.inputs.platform == matrix.name
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,6 +65,7 @@ jobs:
 
       - name: Build frontend with Trunk
         run: trunk build --release
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
