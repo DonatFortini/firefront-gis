@@ -16,7 +16,7 @@ lazy_static! {
     static ref DB_POOL: Mutex<Vec<Connection>> = Mutex::new(Vec::new());
 }
 
-const PRAGMA_INIT: &str = "PRAGMA journal_mode = WAL;
+const PRAGMA_INIT: &str = "PRAGMA journal_mode = DELETE;
      PRAGMA synchronous = NORMAL;
      PRAGMA cache_size = 10000;
      PRAGMA temp_store = MEMORY;
