@@ -13,6 +13,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "dialog"])]
     pub async fn open(args: JsValue) -> JsValue;
+
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], catch)]
+    pub async fn listen(event: &str, handler: &js_sys::Function) -> Result<JsValue, JsValue>;
 }
 
 pub mod prelude {

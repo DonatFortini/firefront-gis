@@ -1,6 +1,6 @@
 [package]
 name = "firefront-gis"
-version = "0.3.3"
+version = "0.3.4"
 description = "GIS application for Firefighters"
 authors = ["Donat Fortini"]
 edition = "2024"

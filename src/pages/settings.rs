@@ -56,7 +56,6 @@ fn format_size(bytes: u64) -> String {
 
 #[styled_component(Settings)]
 pub fn settings() -> Html {
-    let os = use_state(|| Rc::new(String::from("Détection...")));
     let output_location = use_state(String::new);
     let settings_loaded = use_state(|| false);
     let status_message = use_state(|| Option::<StatusMessage>::None);
@@ -97,18 +96,6 @@ pub fn settings() -> Html {
         let load_cache_info = load_cache_info.clone();
         use_effect_with((), move |_| {
             load_cache_info.emit(());
-            || ()
-        });
-    }
-
-    {
-        let os = os.clone();
-        use_effect_with((), move |_| {
-            spawn_local(async move {
-                if let Some(os_value) = invoke_without_args("get_os").await.as_string() {
-                    os.set(Rc::new(os_value));
-                }
-            });
             || ()
         });
     }
@@ -345,7 +332,6 @@ pub fn settings() -> Html {
 
             <div class={container_style}>
                 <div class="content">
-                    <SystemInfo os={(**os).clone()} />
 
                     {if let Some(msg) = &*status_message {
                         html! { <StatusAlert message={msg.clone()} /> }
@@ -370,56 +356,6 @@ pub fn settings() -> Html {
                 </div>
             </div>
         </>
-    }
-}
-
-#[derive(Properties, PartialEq)]
-struct SystemInfoProps {
-    os: String,
-}
-
-#[styled_component(SystemInfo)]
-fn system_info(props: &SystemInfoProps) -> Html {
-    let style = css!(
-        r#"
-        margin-bottom: 24px;
-        padding: 20px 24px;
-        background: linear-gradient(135deg, #242424 0%, #1c1c1c 100%);
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        
-        .info-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            color: #cccccc;
-            font-size: 1rem;
-        }
-        
-        .label {
-            font-weight: 500;
-        }
-        
-        .value {
-            color: #ff4141;
-            font-weight: 600;
-            font-family: 'Fira Code', monospace;
-        }
-        
-        .icon {
-            font-size: 1.5rem;
-        }
-        "#
-    );
-
-    html! {
-        <div class={style}>
-            <div class="info-row">
-                <span class="icon">{"💻"}</span>
-                <span class="label">{"Système d'exploitation détecté :"}</span>
-                <span class="value">{&props.os}</span>
-            </div>
-        </div>
     }
 }
 

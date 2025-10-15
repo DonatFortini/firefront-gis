@@ -257,6 +257,7 @@ impl ProjectService {
                 .blocking_show();
 
             if !should_overwrite {
+                Progress::status("Création du projet annulée");
                 return Ok("Project creation cancelled".to_string());
             }
 
