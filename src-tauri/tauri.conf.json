@@ -38,7 +38,7 @@
         "connect-src": "'self' https://geoservices.ign.fr https://data.geopf.fr https://github.com ipc: http://ipc.localhost tauri:",
         "script-src": "'self' 'wasm-unsafe-eval' 'unsafe-inline'",
         "style-src": "'self' 'wasm-unsafe-eval' 'unsafe-inline'",
-        "img-src": "'self' asset: https: tauri: data:",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost http://localhost https: tauri: data:",
         "font-src": "'self' data:"
       },
       "freezePrototype": true,

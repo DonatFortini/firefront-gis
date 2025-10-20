@@ -7,7 +7,7 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
     pub async fn invoke(cmd: &str, args: JsValue) -> JsValue;
-
+    //FIXME: not working in the build
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     pub fn convertFileSrc(filePath: &str, protocol: Option<&str>) -> String;
 
