@@ -34,19 +34,19 @@ impl DataSources {
         Self {
             sources: Vec::from([
                 DataSource {
-                    url: "https://geoservices.ign.fr/bdtopo".to_string(),
+                    url: "https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-TOPO".to_string(),
                     storage_name: "BDTOPO".to_string(),
                     prefix: Some("D0".to_string()),
                     keyword: None,
                 },
                 DataSource {
-                    url: "https://geoservices.ign.fr/bdforet".to_string(),
+                    url: "https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-FORET".to_string(),
                     storage_name: "BDFORET".to_string(),
                     prefix: Some("D0".to_string()),
                     keyword: Some("BDFORET_2-0".to_string()),
                 },
                 DataSource {
-                    url: "https://geoservices.ign.fr/rpg".to_string(),
+                    url: "https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_RPG".to_string(),
                     storage_name: "RPG".to_string(),
                     prefix: Some("R".to_string()),
                     keyword: None,

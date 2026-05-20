@@ -76,7 +76,7 @@ pub fn get_cache_info() -> Result<CacheInfo, String> {
     let (total_size, mut files) = get_dir_size_and_files(&cache_path)
         .map_err(|e| format!("Erreur lors de la lecture du cache: {}", e))?;
 
-    files.sort_by(|a, b| b.size.cmp(&a.size));
+    files.sort_by_key(|b| std::cmp::Reverse(b.size));
 
     Ok(CacheInfo {
         total_size,

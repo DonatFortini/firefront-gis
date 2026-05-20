@@ -289,20 +289,18 @@ impl ProcessingService {
                             )
                             .await?
                     }
-                    3 => {
-                        if Path::new(&layer_path).exists() {
-                            let dataset = Dataset::open(&layer_path)
-                                .await
-                                .map_err(|e| GisError::Dataset(e.to_string()))?;
-                            if let Some(count) = dataset
-                                .feature_count(0)
-                                .map_err(|e| GisError::Dataset(e.to_string()))?
-                                && count > 0
-                            {
-                                processor
-                                    .apply_black_layer(project_file_path, &layer_path, "topo")
-                                    .await?;
-                            }
+                    3 if Path::new(&layer_path).exists() => {
+                        let dataset = Dataset::open(&layer_path)
+                            .await
+                            .map_err(|e| GisError::Dataset(e.to_string()))?;
+                        if let Some(count) = dataset
+                            .feature_count(0)
+                            .map_err(|e| GisError::Dataset(e.to_string()))?
+                            && count > 0
+                        {
+                            processor
+                                .apply_black_layer(project_file_path, &layer_path, "topo")
+                                .await?;
                         }
                     }
                     _ => {}
